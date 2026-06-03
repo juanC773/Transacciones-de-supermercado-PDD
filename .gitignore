@@ -1,0 +1,52 @@
+# Entorno virtual Python
+venv/
+.venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+*.log
+hs_err_pid*
+
+# Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env.local
+
+# Spark (artefactos locales al correr ETL)
+spark-warehouse/
+metastore_db/
+derby.log
+
+# Dataset original (copiar localmente — ver DataSet/README.md)
+DataSet/**
+!DataSet/README.md
+
+# Salida del ETL y modelos (regenerar con python -m src.etl.load_transactions)
+data/
+models/*.joblib
+models/*.pkl
+
+# IDE / editor
+.idea/
+.vscode/
+.cursor/
+
+# Documentación local del curso (no versionar)
+enunciado proyecto.pdf
+enunciado*.pdf
+
+# Capturas y assets locales de Cursor (no parte del proyecto)
+assets/
+
+# Sistema operativo
+.env
+.DS_Store
+__MACOSX/
+Thumbs.db
