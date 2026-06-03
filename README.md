@@ -5,6 +5,9 @@ Sistema de analítica sobre transacciones de retail: ETL con PySpark, API REST y
 **Curso:** Procesamiento distribuido de datos  
 **Periodo de datos:** enero–junio 2013 · Tiendas 102, 103, 107, 110
 
+
+**Autores:** Juan Calderon y Pablo Guzman
+
 ---
 
 ## Documentación
