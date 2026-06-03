@@ -17,6 +17,7 @@ Sistema de analítica sobre transacciones de retail: ETL con PySpark, API REST y
 | [docs/instalacion.md](docs/instalacion.md) | Requisitos, instalación, ETL y puesta en marcha |
 | [docs/manual-usuario.md](docs/manual-usuario.md) | Uso del dashboard, filtros e ingestión de datos |
 | [docs/arquitectura.md](docs/arquitectura.md) | Arquitectura, flujo de datos y mapa del código |
+| [docs/informe-tecnico.md](docs/informe-tecnico.md) | Informe técnico: datos, metodología, hallazgos, modelos y conclusiones |
 | [DataSet/README.md](DataSet/README.md) | Estructura y formato de los CSV de entrada |
 
 ---
