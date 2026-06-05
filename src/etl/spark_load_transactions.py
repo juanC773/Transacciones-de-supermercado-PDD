@@ -1,6 +1,7 @@
-"""ETL batch con PySpark (local[*]). Invocado desde load_transactions."""
+"""ETL batch con PySpark (local[*] o cluster Databricks/Synapse). Invocado desde load_transactions."""
 from __future__ import annotations
 import json
+import os
 from datetime import datetime
 import pandas as pd
 from pyspark.sql import SparkSession
@@ -39,11 +40,21 @@ ROW_SCHEMA = StructType(
 )
 
 
+def _on_spark_cluster() -> bool:
+    """Databricks o Synapse Spark pool: usar el cluster adjunto, no local[*]."""
+    return bool(
+        os.environ.get("DATABRICKS_RUNTIME_VERSION")
+        or os.environ.get("SYNAPSE_SPARK_POOL_USAGE")
+    )
+
+
 def _spark_session() -> SparkSession:
-    """Crea sesión Spark en modo local (usa todos los núcleos de tu PC)."""
+    """Local: local[*]. Nube: sesión del cluster (driver + executors)."""
+    builder = SparkSession.builder.appName("TransaccionesSupermercado")
+    if _on_spark_cluster():
+        return builder.config("spark.sql.shuffle.partitions", "16").getOrCreate()
     return (
-        SparkSession.builder.appName("TransaccionesSupermercado")
-        .master("local[*]")  # [*] = paralelismo local; no es un clúster remoto
+        builder.master("local[*]")
         .config("spark.sql.shuffle.partitions", "8")
         .config("spark.driver.memory", "4g")
         .getOrCreate()
@@ -249,7 +260,7 @@ def build_aggregates_spark(force: bool = False) -> dict[str, pd.DataFrame]:
             "fecha_max": str(por_dia["fecha"].max()) if not por_dia.empty else "",
             "tiendas": sorted(int(x) for x in por_dia["id_tienda"].unique()) if not por_dia.empty else [],
             "generado": datetime.now().isoformat(),
-            "etl_engine": "spark-local",
+            "etl_engine": "spark-cluster" if _on_spark_cluster() else "spark-local",
         }
         META_FILE.write_text(json.dumps(meta, indent=2), encoding="utf-8")
         marker.touch()  # marca que el ETL terminó OK
@@ -257,4 +268,6 @@ def build_aggregates_spark(force: bool = False) -> dict[str, pd.DataFrame]:
         _train_ml_safe(frames)
         return frames
     finally:
-        spark.stop()  # liberar memoria al terminar
+        # En notebook Databricks no cerrar la sesión compartida del cluster.
+        if not _on_spark_cluster():
+            spark.stop()

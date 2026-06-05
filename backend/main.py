@@ -2,11 +2,23 @@
 API HTTP: dashboard, ETL, ingestión de CSV, segmentación K-Means y recomendaciones.
 """
 from __future__ import annotations
+import os
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+
+
+def _cors_origins() -> list[str]:
+    """Local dev + orígenes extra en CORS_ORIGINS (separados por coma)."""
+    origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    extra = os.environ.get("CORS_ORIGINS", "")
+    for origin in extra.split(","):
+        origin = origin.strip().rstrip("/")
+        if origin and origin not in origins:
+            origins.append(origin)
+    return origins
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,7 +37,8 @@ app = FastAPI(title="Transacciones Supermercado API", version="1.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=_cors_origins(),
+    allow_origin_regex=os.environ.get("CORS_ORIGIN_REGEX") or r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
