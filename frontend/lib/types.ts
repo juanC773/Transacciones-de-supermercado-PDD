@@ -13,6 +13,12 @@ export type Filters = {
   fecha_max: string;
 };
 
+export type StoreInfo = {
+  id: number;
+  nombre: string;
+  es_base: boolean;
+};
+
 export type DashboardData = {
   kpis: { total_ventas: number; total_transacciones: number; total_clientes: number };
   top_categorias: { id_categoria: number; nombre_categoria: string; unidades: number }[];

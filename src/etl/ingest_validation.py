@@ -1,6 +1,6 @@
 """
 Validación de CSV de transacciones antes de ingestión.
-Solo tiendas del dataset: 102, 103, 107, 110.
+Tiendas del dataset base (102, 103, 107, 110) y tiendas registradas por el usuario.
 """
 from __future__ import annotations
 
@@ -8,8 +8,9 @@ from datetime import datetime
 from pathlib import Path
 
 from src.etl.load_transactions import STORES_WITH_CATEGORY_IDS, VALID_CATEGORY_MAX
+from src.etl.store_registry import BASE_STORES, is_registered_store
 
-ALLOWED_STORES = frozenset({102, 103, 107, 110})
+ALLOWED_STORES = BASE_STORES
 MAX_REPORTED_ERRORS = 15
 MIN_VALID_LINE_RATIO = 0.95
 
@@ -76,12 +77,12 @@ def _non_empty_lines(content: str) -> list[str]:
 
 def validate_transactions_csv(content: str, required_store: int | None = None) -> dict:
     """
-    required_store: si se pasa, el CSV debe ser solo de esa tienda (102/103/107/110).
+    required_store: si se pasa, el CSV debe ser solo de esa tienda registrada.
     """
-    if required_store is not None and required_store not in ALLOWED_STORES:
+    if required_store is not None and not is_registered_store(required_store):
         return {
             "ok": False,
-            "errores": [f"Tienda {required_store} no permitida. Solo: 102, 103, 107, 110."],
+            "errores": [f"Tienda {required_store} no registrada. Créala antes de subir datos."],
             "advertencias": [],
             "lineas_validas": 0,
             "lineas_totales": 0,
@@ -133,10 +134,10 @@ def validate_transactions_csv(content: str, required_store: int | None = None) -
                 "lineas_para_agregar": [],
             }
         store = next(iter(tiendas))
-        if store not in ALLOWED_STORES:
+        if not is_registered_store(store):
             return {
                 "ok": False,
-                "errores": [f"Tienda {store} no permitida. Solo: 102, 103, 107, 110."],
+                "errores": [f"Tienda {store} no registrada. Créala antes de subir datos."],
                 "advertencias": [],
                 "lineas_validas": 0,
                 "lineas_totales": len(non_empty),

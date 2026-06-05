@@ -1,4 +1,4 @@
-export const ALLOWED_STORES = [102, 103, 107, 110] as const;
+export const BASE_STORES = [102, 103, 107, 110] as const;
 
 export type TranCsvValidation = {
   ok: boolean;
@@ -66,17 +66,6 @@ function validateLine(line: string, lineNo: number, expectedStore: number): stri
 }
 
 export function validateTranCsvForStore(content: string, storeId: number): TranCsvValidation {
-  if (!ALLOWED_STORES.includes(storeId as (typeof ALLOWED_STORES)[number])) {
-    return {
-      ok: false,
-      errores: [`Tienda ${storeId} no permitida`],
-      advertencias: [],
-      lineas_validas: 0,
-      lineas_totales: 0,
-      tienda: storeId,
-    };
-  }
-
   const nonEmpty = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n").filter((l) => l.trim());
   if (nonEmpty.length === 0) {
     return {

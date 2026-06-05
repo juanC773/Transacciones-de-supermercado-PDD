@@ -45,6 +45,11 @@ fecha|tienda|id_cliente|item1 item2 item3 ...
 - **Categories.csv:** `id|nombre` — 50 categorías de producto
 - **ProductCategory.csv:** `sku|categoria` — relación producto → categoría
 
+## Ejemplos para probar ingestión
+
+CSV pequeños (válidos y con errores) en [ejemplos-prueba/](ejemplos-prueba/README.md).  
+Útiles para ver la validación en el front antes de subir y en la API al confirmar.
+
 ## Generación de agregados
 
 Desde la raíz del proyecto:

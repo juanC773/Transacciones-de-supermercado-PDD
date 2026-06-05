@@ -1,4 +1,4 @@
-import type { DashboardData, Filters, Meta, RecomendacionCategoria, SegmentacionData } from "./types";
+import type { DashboardData, Filters, Meta, RecomendacionCategoria, SegmentacionData, StoreInfo } from "./types";
 import { formatUploadError } from "./validateTranCsv";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -9,6 +9,37 @@ function filterParams(filters: Filters) {
     fecha_min: filters.fecha_min,
     fecha_max: filters.fecha_max,
   });
+}
+
+export async function fetchTiendas(): Promise<StoreInfo[]> {
+  const res = await fetch(`${API_URL}/api/tiendas`, { cache: "no-store" });
+  if (!res.ok) throw new Error("No se pudo cargar la lista de tiendas");
+  const data = (await res.json()) as { tiendas: StoreInfo[] };
+  return data.tiendas;
+}
+
+export async function crearTienda(idTienda: number, nombre: string): Promise<StoreInfo> {
+  const res = await fetch(`${API_URL}/api/tiendas`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id_tienda: idTienda, nombre }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const detail = (err as { detail?: string }).detail;
+    throw new Error(typeof detail === "string" ? detail : "No se pudo crear la tienda");
+  }
+  const data = (await res.json()) as { tienda: StoreInfo };
+  return data.tienda;
+}
+
+export async function eliminarTienda(idTienda: number): Promise<void> {
+  const res = await fetch(`${API_URL}/api/tiendas/${idTienda}`, { method: "DELETE" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const detail = (err as { detail?: string }).detail;
+    throw new Error(typeof detail === "string" ? detail : "No se pudo eliminar la tienda");
+  }
 }
 
 export async function fetchMeta(): Promise<Meta> {
