@@ -2,7 +2,7 @@
 
 **Proyecto:** Transacciones de supermercado (PDD)  
 **Periodo analizado:** 1 de enero – 30 de junio de 2013  
-**Tiendas:** 102, 103, 107, 110  
+**Tiendas base del curso:** 102, 103, 107, 110 (+ tiendas nuevas registrables desde el dashboard)  
 **Fecha del informe:** 5 de junio de 2026  
 **Motor ETL utilizado para este informe:** Python streaming (`ETL_ENGINE=python`)
 
@@ -11,6 +11,8 @@
 ## Resumen
 
 Se procesaron **1.062.776 transacciones** (tras prueba de ingestión de 3 líneas adicionales en tienda 102), **8.794.689 unidades** vendidas y **154.045 clientes** únicos (clave tienda + cliente). La solución materializa agregados en Parquet, expone un dashboard web y entrena modelos de **segmentación K-Means (k = 4)** y **recomendación por co-ocurrencia de categorías** (1.250 reglas). Las métricas son relativas (volumen, frecuencia, diversidad), dado que el dataset **no incluye precios ni montos de pago**.
+
+Además del dataset inicial del curso, el sistema permite **crear tiendas nuevas**, **subir CSV adicionales** y **recalcular en vivo** KPIs, gráficos, segmentación y recomendaciones tras pulsar **«Procesar nuevos datos»**. Las cifras de las secciones iii–iv corresponden al snapshot del curso (ene–jun 2013); el dashboard refleja siempre el último ETL ejecutado.
 
 ---
 
@@ -73,6 +75,23 @@ fecha|tienda|id_cliente|item1 item2 item3 ...
 
 La tienda **103** concentra el mayor volumen transaccional; la **110** el menor en el semestre.
 
+### Tiendas base y tiendas nuevas
+
+El sistema distingue dos tipos de punto de venta:
+
+| Tipo | IDs | Comportamiento |
+|------|-----|----------------|
+| **Base (curso)** | 102, 103, 107, 110 | Fijas; no se pueden eliminar ni duplicar |
+| **Creadas por el usuario** | Cualquier entero positivo distinto de las base | Registro en `DataSet/DataSet/stores.json`; CSV vacío `{id}_Tran.csv` |
+
+**Creación de tienda nueva** (`POST /api/tiendas` o modal «Crear tienda» en el sidebar):
+
+1. Se asigna un **id numérico** y un **nombre** (máx. 80 caracteres).
+2. Se crea el archivo `{id}_Tran.csv` y la entrada en `stores.json`.
+3. Los ítems de las tiendas nuevas se interpretan como **SKU → categoría** (igual que 103, 107 y 110), usando `ProductCategory.csv`. Solo la tienda **102** admite categorías 1–50 directas en el CSV.
+
+**Eliminación:** las tiendas creadas por el usuario pueden borrarse (`DELETE /api/tiendas/{id}`); se eliminan su CSV y su registro. Las del curso quedan protegidas.
+
 ### Limitaciones del dataset
 
 1. **No hay precios ni ingresos:** “Rentabilidad” y rankings se interpretan como **volumen relativo** o **frecuencia**.
@@ -87,11 +106,22 @@ Los CSV estaban en `DataSet/DataSet/DataSet/` en lugar de `DataSet/DataSet/`. Se
 
 ## ii. Metodología de análisis
 
+### Enfoque estratégico
+
+La estrategia analítica responde a tres restricciones del problema de negocio y del enunciado:
+
+1. **Datos sin precio:** no es posible medir ingresos ni margen; toda la analítica se apoya en **proxies de comportamiento** — volumen (unidades), frecuencia (transacciones), diversidad (categorías distintas) y patrones temporales. Esta decisión no es una limitación del código, sino una **adaptación metodológica** a lo que el dataset permite inferir con validez.
+2. **Volumen (~1M de tickets):** no es viable servir el dashboard leyendo línea a línea el CSV en cada clic. Por eso se separa un **proceso batch (ETL)** que condensa el detalle en agregados, y una **capa de consulta (API)** que solo filtra tablas ya materializadas.
+3. **Entrega funcional:** el enunciado exige una solución desplegable, no un notebook. La arquitectura ETL → Parquet → API → dashboard traduce el análisis en un producto operativo que además puede **reprocesarse** al llegar datos nuevos.
+
+En síntesis: primero **estandarizar y resumir** (ETL), luego **explorar y diagnosticar** (visualizaciones), y finalmente **modelar** (segmentación y recomendación) sobre representaciones que tengan sentido comercial y escalen en tiempo de respuesta.
+
 ### Arquitectura de la solución
 
 ```mermaid
 flowchart LR
-  CSV[CSV por tienda] --> ETL[ETL Python / Spark]
+  REG[Registro tiendas stores.json] --> CSV[CSV por tienda]
+  CSV --> ETL[ETL Python / Spark]
   ETL --> AGG[Parquet agregados]
   ETL --> CAN[Canastas]
   CAN --> ML[K-Means + reglas]
@@ -99,48 +129,135 @@ flowchart LR
   AGG --> API[FastAPI]
   ART --> API
   API --> UI[Dashboard Next.js]
+  NEW[Crear tienda nueva] --> REG
   ING[Ingestión CSV] --> CSV
-  ING --> ETL
+  PROC[Procesar nuevos datos] --> ETL
+  ING --> PROC
 ```
 
-1. **ETL (`src/etl/load_transactions.py`):** lectura línea a línea, normalización a categorías, agregación a tablas `por_dia`, `por_semana`, `por_categoria`, `por_cliente`, `por_tx`, `canastas`.
-2. **Métricas ejecutivas (`src/metrics/executive_summary.py`):** KPIs y tops sobre agregados filtrados por tienda y fecha.
-3. **Dashboard (`backend/dashboard_service.py`):** series temporales, boxplots por cliente, heatmaps de correlación y actividad día × mes.
-4. **ML (`src/ml/`):** entrenamiento automático tras cada ETL completo.
-5. **Ingestión (`POST /api/ingest/tienda/{id}` + `POST /api/ingest/procesar`):** validación, append al CSV existente y reprocesamiento.
+1. **Registro de tiendas (`src/etl/store_registry.py`):** catálogo de tiendas base + custom; rutas `{id}_Tran.csv`.
+2. **ETL (`src/etl/load_transactions.py`):** recorre **todos** los `*_Tran.csv`, normaliza a categorías y agrega tablas `por_dia`, `por_semana`, `por_categoria`, `por_cliente`, `por_tx`, `canastas`.
+3. **Métricas ejecutivas (`src/metrics/executive_summary.py`):** KPIs y tops sobre agregados **filtrados por tienda y fecha** (checkboxes del sidebar).
+4. **Dashboard (`backend/dashboard_service.py`):** series temporales, boxplots por cliente, heatmaps de correlación y actividad día × mes.
+5. **ML (`src/ml/`):** reentrenamiento automático tras cada ETL completo (incluye datos de tiendas nuevas).
+6. **Ingestión y actualización:**
+   - `POST /api/tiendas` — crear tienda nueva.
+   - `POST /api/ingest/tienda/{id}` — validar y añadir líneas al CSV de una tienda **registrada**.
+   - `POST /api/ingest/procesar` o `POST /api/etl/regenerar` — reprocesar Parquet y modelos ML.
+
+### ETL: por qué este diseño
+
+El **ETL** (*Extract, Transform, Load*) es el núcleo de la estrategia de datos. Sus decisiones no son arbitrarias:
+
+| Decisión | Motivo |
+|----------|--------|
+| **Procesamiento batch** frente a consulta directa al CSV | Con más de un millón de líneas, leer el detalle en cada petición del dashboard sería lento y consumiría demasiada RAM. El ETL paga el costo computacional **una vez** al procesar, y el dashboard consulta agregados livianos. |
+| **Agregados en Parquet** (`por_dia`, `por_cliente`, etc.) | Formato columnar eficiente para filtrar por tienda y fecha. Equivale a una capa **OLAP** intermedia: se pierde detalle de línea, pero se gana interactividad. |
+| **Doble motor: Spark / Python streaming** | Spark (`ETL_ENGINE=spark`) atiende el requisito de procesamiento distribuido del curso; Python streaming es el **fallback** cuando Spark no está disponible, leyendo CSV línea a línea sin cargar todo en memoria. |
+| **Normalización a categorías (1–50)** | Las tiendas registran ítems con granularidades distintas (categoría directa en 102, SKU en las demás). Unificar a categoría es la única forma de **comparar tiendas** y de alimentar un recomendador común sin precios ni catálogo SKU homogéneo. |
+| **Tabla `canastas` separada** | Conserva, por ticket, el conjunto de categorías compradas — insumo natural para reglas de asociación, sin repetir el parseo del CSV en el módulo ML. |
+| **Reentrenamiento ML al final del ETL** | Garantiza coherencia: los modelos siempre reflejan el mismo snapshot que los agregados del dashboard. Evita inconsistencias entre KPIs y segmentación. |
+
+Esta arquitectura materializa el requisito del enunciado de **incorporar nuevos datos**: al append de CSV y reproceso, todo el pipeline (agregados + ML) se recalcula desde la misma fuente de verdad.
 
 ### Analítica descriptiva y diagnóstica
 
-- **Indicadores absolutos relativos:** unidades y conteos de transacciones/clientes.
-- **Rankings:** top 10 categorías y clientes por volumen o frecuencia.
-- **Temporal:** series diarias y semanales; heatmap día de semana × mes.
-- **Distribución:** boxplot del tamaño de canasta (`cantidad` por ticket) para clientes con más actividad.
-- **Correlación:** matriz de Pearson entre `n_transacciones`, `unidades`, `n_categorias` y `frecuencia_semanal` a nivel cliente.
+Cada visualización del enunciado responde a una pregunta de negocio concreta:
+
+| Visualización | Pregunta que responde | Por qué esta técnica |
+|---------------|----------------------|----------------------|
+| KPIs (ventas, transacciones, clientes) | ¿Cuál es la escala del negocio? | Indicadores simples y comparables sin precios; base para cualquier otro análisis. |
+| Top 10 categorías / clientes | ¿Dónde se concentra el valor relativo? | Rankings sobre agregados; detectan líderes de volumen y clientes influyentes. |
+| Serie de tiempo (día / semana) | ¿Hay tendencia y estacionalidad? | Identifica picos operativos y ciclos semanales para planeación de personal e inventario. |
+| Heatmap día × mes | ¿Qué combinaciones día-período concentran demanda? | Cruza dos dimensiones temporales; más informativo que una serie univariada para detectar fines de semana estacionales. |
+| Boxplot por cliente | ¿Cómo varía el tamaño de canasta entre clientes frecuentes? | Resume distribución (mediana, cuartiles, outliers) sin enviar millones de puntos al frontend; separa clientes de “muchas visitas pequeñas” vs. “canastas grandes”. |
+| Heatmap de correlación | ¿Cómo se relacionan frecuencia, volumen y diversidad? | Diagnóstico previo y complemento a K-Means: justifica por qué hacen falta varias variables y no solo “número de compras”. |
+
+Al no existir montos en dinero, “categorías más rentables” del enunciado se interpreta como **mayor volumen o frecuencia relativa** — la mejor proxy disponible y defendible dado el dataset.
 
 ### Segmentación (K-Means)
 
-| Parámetro | Valor |
-|-----------|-------|
-| Algoritmo | K-Means (`sklearn`, `k=4`, `random_state=42`) |
-| Escalado | `StandardScaler` |
-| Variables | `n_transacciones`, `unidades`, `n_categorias`, `frecuencia_semanal` |
-| Visualización | Proyección PCA 2D (800 puntos muestreados en API) |
-| Etiquetado | Heurístico según centroides vs. mediana |
+#### Por qué K-Means y no otro algoritmo
+
+El enunciado solicita explícitamente **K-Means**. Más allá del cumplimiento normativo, es una elección razonable para este contexto:
+
+- **Tipo de variables:** las métricas por cliente son numéricas y continuas (conteos y ratios), no etiquetas. K-Means está diseñado para ese espacio.
+- **Escala:** con ~154.000 clientes, K-Means con `sklearn` es computacionalmente viable; algoritmos como clustering jerárquico serían mucho más costosos en tiempo y memoria.
+- **Interpretabilidad:** cada grupo se describe con perfiles promedio (transacciones, unidades, categorías) que un área de negocio puede entender, frente a modelos de caja negra.
+- **Alternativas descartadas:** DBSCAN depende de densidad y parámetros difíciles de explicar al negocio; segmentación por reglas fijas (p. ej. “más de 10 compras = VIP”) no captura la interacción entre frecuencia, volumen y diversidad.
+
+#### Por qué estas variables
+
+Las variables elegidas son las sugeridas en el enunciado, adaptadas a la ausencia de precios:
+
+| Variable | Qué captura del comportamiento | Rol en la segmentación |
+|----------|-------------------------------|------------------------|
+| `n_transacciones` | Frecuencia de visita | Distingue clientes esporádicos de recurrentes. |
+| `unidades` | Volumen total comprado | Proxy de “valor” sin precio; identifica compradores de alto consumo. |
+| `n_categorias` | Diversidad del surtido consumido | Separa compra focalizada (pocas categorías) de canasta amplia. |
+| `frecuencia_semanal` | Intensidad temporal (`n_tx / días_activos × 7`) | Incorpora el **ritmo** de compra: un cliente con una sola visita en un día tiene frecuencia semanal alta, distinto de uno con muchas visitas repartidas en meses. |
+
+Sin `frecuencia_semanal`, dos clientes con el mismo número de transacciones podrían mezclarse aunque tengan patrones temporales opuestos. El heatmap de correlación (sección iii) muestra que estas variables aportan información parcialmente distinta — justificando un modelo multivariado.
+
+#### Por qué escalar y por qué k = 4
+
+| Parámetro | Valor | Justificación |
+|-----------|-------|---------------|
+| Algoritmo | K-Means (`sklearn`, `k=4`, `random_state=42`, `n_init=10`) | `random_state` y `n_init` aseguran **reproducibilidad** del informe y reducen dependencia del inicializado aleatorio. |
+| Escalado | `StandardScaler` | `unidades` llega a cientos y `n_transacciones` a decenas; sin escalado, K-Means ponderaría dominante la variable de mayor magnitud y los clusters reflejarían solo volumen, no el perfil completo. |
+| k = 4 | Cuatro clusters | Equilibrio entre **granularidad** (suficiente para diferenciar ocasionales, frecuentes, intensivos y élite) y **parsimonia** (grupos accionables para marketing sin fragmentar en decenas de microsegmentos). Cuatro perfiles son presentables y alineados con estrategias típicas de retail. |
+| Visualización | PCA 2D (800 puntos muestreados) | PCA **solo para graficar**, no para clusterizar: se clusteriza en el espacio completo de 4 variables y se proyecta a 2D para el humano. El muestreo evita saturar el navegador con 154k puntos. |
+| Etiquetado | Heurístico vs. mediana de centroides | K-Means devuelve IDs numéricos; las etiquetas (“Compradores ocasionales”, etc.) se asignan **después** comparando centroides con la mediana, traduciendo matemática a lenguaje de negocio. |
+
+#### Lectura crítica del modelo
+
+K-Means asume clusters **esféricos** y de tamaño comparable; en datos de retail reales los grupos pueden solaparse. Aun así, los perfiles obtenidos (sección iv) son coherentes con la exploración visual: conviven clientes de baja actividad masiva, compradores frecuentes de ticket pequeño y un núcleo élite de alto volumen. El modelo cumple su función: **ordenar la base en grupos accionables**, no predecir con precisión el comportamiento de un individuo.
 
 ### Recomendador
 
-- **Método:** co-ocurrencia de pares de categorías en canastas (alternativa ligera a Apriori sobre matriz one-hot grande).
-- **Muestra de entrenamiento:** hasta 80.000 canastas aleatorias.
-- **Umbral:** confianza mínima 0,08; top 25 reglas por categoría antecedente.
-- **Salida:** sugerencias de **categorías** complementarias, con *score* (lift acumulado) y *confidence*.
+#### Por qué reglas de asociación y no otro enfoque
 
-### Incorporación de nuevos datos
+El enunciado permite **filtrado colaborativo o reglas de asociación**. Se eligió asociación por canasta por estas razones:
 
-Flujo validado en este informe:
+| Criterio | Decisión |
+|----------|----------|
+| Naturaleza del dato | No hay ratings ni precios; la señal disponible es **co-compra en el mismo ticket** — evidencia directa de complementariedad. |
+| Filtrado colaborativo clásico | Requiere matriz usuario-ítem densa o ratings implícitos difíciles de calibrar sin montos; con 154k clientes y 50 categorías la sparsity es extrema y las recomendaciones por cliente serían ruidosas. |
+| Nivel categoría | Coincide con la granularidad unificada del ETL y con acciones de negocio (promociones cruzadas entre pasillos / categorías). |
+| Apriori completo | Con ~1M de canastas, una matriz one-hot de presencia de categorías para Apriori estándar arriesga **memoria insuficiente (OOM)**. El algoritmo implementado cuenta **pares de co-ocurrencia** por canasta — misma lógica de asociación, complejidad acotada. |
 
-1. Validar CSV (UTF-8, formato, tienda permitida, ≥95 % líneas válidas).
-2. **Solo** append a `{tienda}_Tran.csv` si la tienda ∈ {102, 103, 107, 110}.
-3. `build_aggregates(force=True)` + reentrenamiento ML.
+#### Métricas y umbrales
+
+- **Support / confidence:** miden qué tan frecuente es la regla `A → B` en las canastas. *Confidence* filtra reglas triviales o muy raras (`min = 0,08`).
+- **Lift:** compara la co-ocurrencia observada con la esperada si A y B fueran independientes; prioriza asociaciones **más fuertes que el azar**, no solo categorías populares (p. ej. leche, que aparece en muchas canastas).
+- **Muestra de 80.000 canastas:** submuestreo aleatorio con semilla fija para entrenar en tiempo razonable manteniendo representatividad estadística en un dataset de más de un millón de tickets.
+- **Score al recomendar por cliente:** acumula `lift × confidence` de reglas activadas por categorías ya compradas — combina fuerza de asociación y fiabilidad.
+
+Este diseño prioriza **explicabilidad** (“se compra junto a…”) sobre precisión predictiva pura, adecuado para un sistema académico-demostrativo y para campañas de cross-selling por categoría.
+
+### Incorporación de nuevos datos y tiendas
+
+Flujo operativo del dashboard (requisito *Generación de nuevos resultados* del enunciado):
+
+| Paso | Acción | Efecto |
+|------|--------|--------|
+| 1 | **Crear tienda** (opcional) | Nuevo `{id}_Tran.csv` + entrada en `stores.json` |
+| 2 | **Subir CSV** (`+` junto a la tienda) | Validación UTF-8, formato pipe, ≥95 % líneas válidas; append al CSV |
+| 3 | **Procesar nuevos datos** | ETL completo sobre todos los CSV + reentrenamiento ML |
+| 4 | **Activar tienda en sidebar** | Incluir la sucursal en filtros del resumen y visualizaciones |
+
+**Qué se actualiza tras procesar:**
+
+| Componente | ¿Se recalcula? | Notas |
+|------------|:--------------:|-------|
+| KPIs (ventas, transacciones, clientes) | Sí | Según tiendas y fechas seleccionadas |
+| Top clientes / categorías | Sí | Con tienda activa en filtros |
+| Series temporales, boxplots, heatmaps | Sí | Mismos filtros |
+| Segmentación K-Means | Sí | Modelo **global** (todos los clientes del ETL) |
+| Recomendador | Sí | Reglas sobre todas las canastas procesadas |
+| Este informe Markdown | No | Documento estático; hay que regenerarlo si se quiere reflejar nuevos totales |
+
+**Validaciones clave:** no se puede subir datos a una tienda no registrada; no se pueden crear IDs duplicados ni reemplazar las tiendas base del curso; cada archivo de carga debe contener **una sola tienda**.
 
 ---
 
@@ -311,20 +428,23 @@ Patrón de **canasta de hogar** (desayuno + aseo + despensa).
 
 ### C. Generación de nuevos resultados (verificación funcional)
 
-Pruebas ejecutadas el 3-jun-2026:
+Pruebas ejecutadas en el desarrollo del sistema:
 
 | Prueba | Resultado esperado | Resultado obtenido |
 |--------|-------------------|-------------------|
-| Ingestión tienda 999 | Rechazo | OK — validación falla |
+| Ingestión tienda no registrada (999) | Rechazo | OK — «Tienda no registrada» |
+| Crear tienda nueva (p. ej. id 201) | CSV + `stores.json` | OK — aparece en sidebar y `GET /api/tiendas` |
+| Subir CSV a tienda nueva | Append tras validación | OK — mismo formato que tiendas del curso |
 | Ingestión 3 líneas tienda 102 | Append + reproceso | OK — transacciones 1.062.773 → 1.062.776 (+3) |
 | `ml_ready` tras reproceso | true | OK |
 | `recommender_ready` | true | OK |
-| Segmentación tras ingestión | 4 clusters, 154.045 clientes | OK |
+| Segmentación tras ingestión | 4 clusters, clientes actualizados | OK — 154.045 clientes tras prueba en 102 |
 | Recomendación cliente nuevo 999999001 | ≥1 categoría | OK (GALLETAS, VERDURAS, ENLATADOS) |
 | API `/api/health` | aggregates + ml | OK |
-| API `/api/recomendaciones/categoria?id_categoria=13` | JSON con recomendaciones | OK |
+| Dashboard con tienda nueva activa | KPIs incluyen nueva sucursal | OK — filtros del sidebar aplicados en `/api/dashboard` |
+| Eliminar tienda custom | Borra CSV y registro | OK — tiendas base protegidas |
 
-**Restricción confirmada:** la ingestión **no crea tiendas nuevas**; solo amplía CSV existentes de 102, 103, 107 u 110. Tiendas o archivos inexistentes devuelven error 400/404.
+**Comportamiento confirmado:** las estadísticas analíticas (clientes, categorías, gráficos, modelos) **se actualizan** al incorporar datasets nuevos, siempre que se **procese** el ETL y se **activen** las tiendas correspondientes en el panel izquierdo. La segmentación incorpora automáticamente clientes de tiendas nuevas al reentrenar.
 
 ---
 
@@ -335,8 +455,10 @@ Pruebas ejecutadas el 3-jun-2026:
 1. El negocio muestra **alto volumen en categorías de proteína procesada y cuidado del hogar**, útil para negociación con proveedores y planificación de inventario, aunque no sustituye análisis de margen sin datos de precio.
 2. La demanda es **claramente semanal**, con fines de semana críticos para dotación de personal y reposición; los picos diarios exigen capacidad logística en fechas puntuales (p. ej. mediados de junio).
 3. La base de clientes es **heterogénea**: ~40 % ocasionales y ~5 % super-compradores que concentran valor relativo en unidades; las estrategias no pueden ser únicas.
-4. La correlación negativa entre frecuencia semanal y volumen obliga a **definir bien las variables** al segmentar (el modelo K-Means ya separa el grupo de “una visita, alta frecuencia calculada”).
-5. El recomendador por categorías es **operativo y escalable**; es adecuado para campañas de cross-selling cuando no hay SKU unificado ni precios.
+4. La correlación negativa entre frecuencia semanal y volumen **valida la estrategia multivariada** de K-Means: una sola métrica (p. ej. solo número de compras) mezclaría perfiles distintos; el modelo separa correctamente el grupo de “visitas frecuentes, canasta moderada”.
+5. El recomendador por categorías es **operativo, escalable y explicable**; la elección de co-ocurrencia con lift es coherente con la ausencia de precios y con la necesidad de evitar explosión de memoria en ~1M de tickets.
+6. El pipeline **ETL batch → agregados → API → dashboard** demostró ser la estrategia correcta para conciliar escala de datos, interactividad y requisito de solución funcional; la ingestión de tiendas nuevas extiende esa misma lógica sin cambiar la arquitectura.
+7. La solución es **metodológicamente consistente**: las mismas categorías normalizadas alimentan descriptivo, segmentación y recomendación, evitando comparar “peras con manzanas” entre tiendas con distinto formato de ítems.
 
 ### Aplicaciones empresariales
 
@@ -347,14 +469,16 @@ Pruebas ejecutadas el 3-jun-2026:
 | **Category management** | Priorizar surtido y espacio en categorías líderes por volumen; evaluar subcategorías débiles. |
 | **CRM / fidelización** | Identificar super-compradores (cluster 3) para beneficios exclusivos; reactivar ocasionales (cluster 0). |
 | **E-commerce / apps** | Motor de “también te puede interesar” por categoría y por historial de cliente. |
-| **Data ops** | Pipeline de ingestión por tienda para ir incorporando ventas nuevas sin redeploy (requisito del enunciado). |
+| **Data ops** | Alta de sucursales, carga incremental de CSV y reproceso batch desde el sidebar; escalable a más puntos de venta. |
+| **Expansión regional** | Comparar KPIs por tienda (base vs. nuevas) activando filtros en el dashboard tras cada carga. |
 
 ### Trabajo futuro recomendado
 
 - Incorporar **precios o márgenes** cuando existan, para “categorías más rentables” en sentido financiero.
 - Unificar etiquetas de clusters 2 y 3 en la UI.
 - Evaluar **silueta** o método del codo para validar k = 4.
-- Extender ingestión con auditoría (log de líneas rechazadas) y soporte de tiendas nuevas si el negocio lo requiere.
+- Filtrar la pestaña de segmentación por tiendas seleccionadas (hoy el modelo es global).
+- Auditoría de ingestión (log de líneas rechazadas) y exportación automática de este informe tras cada reproceso.
 
 ---
 
@@ -371,6 +495,15 @@ python -m venv venv
 .\venv\Scripts\uvicorn backend.main:app --port 8000
 # Frontend: cd frontend && npm run dev
 ```
+
+**Incorporar tienda nueva y actualizar estadísticas (dashboard):**
+
+1. En el sidebar → **Crear tienda** (id + nombre).
+2. Pulsar **+** en esa tienda y subir el CSV.
+3. **Procesar nuevos datos**.
+4. Marcar la tienda en los checkboxes del sidebar y ajustar fechas si aplica.
+
+Los KPIs, gráficos y modelos ML del dashboard reflejarán el último procesamiento. Para actualizar las tablas numéricas de este Markdown, vuelve a ejecutar el ETL y exporta métricas (p. ej. `data/processed/informe_metrics.json`).
 
 ### Referencias del repositorio
 
