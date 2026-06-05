@@ -8,6 +8,39 @@
 
 ---
 
+## Nota sobre el dataset en el repositorio
+
+Por **limitaciones de peso y tamaño**, los archivos CSV del curso **no se incluyen en el repositorio Git** (están excluidos en `.gitignore`). Las métricas y hallazgos de este informe se obtuvieron ejecutando el ETL sobre una copia local del dataset; quien clone el proyecto debe **cargarlo manualmente** antes de reproducir el análisis.
+
+### Dataset principal (análisis completo)
+
+Copiar los archivos del curso en la estructura indicada en [DataSet/README.md](../DataSet/README.md):
+
+```
+DataSet/DataSet/Transactions/   → 102_Tran.csv, 103_Tran.csv, 107_Tran.csv, 110_Tran.csv
+DataSet/DataSet/Products/       → Categories.csv, ProductCategory.csv
+```
+
+Luego, desde la raíz del proyecto:
+
+```powershell
+python -m src.etl.load_transactions
+```
+
+o usar **Regenerar datos** / **Procesar nuevos datos** en el dashboard una vez levantados la API y el frontend.
+
+### Archivos de prueba para ingestión
+
+En el repositorio sí se incluyen CSV **pequeños de ejemplo** en `DataSet/ejemplos-prueba/`, documentados en [DataSet/ejemplos-prueba/README.md](../DataSet/ejemplos-prueba/README.md). Sirven para probar la validación y la carga por tienda sin necesitar el dataset completo:
+
+1. Crear una tienda de prueba (p. ej. id `111`) desde el sidebar.
+2. Subir un archivo de `ejemplos-prueba/` con el botón **+** de esa tienda.
+3. Tras un CSV válido, pulsar **Procesar nuevos datos**.
+
+Esa carpeta incluye archivos válidos y con errores deliberados (tienda incorrecta, formato inválido, etc.) para verificar que el sistema rechaza datos mal formados antes de incorporarlos.
+
+---
+
 ## Resumen
 
 Se procesaron **1.062.776 transacciones** (tras prueba de ingestión de 3 líneas adicionales en tienda 102), **8.794.689 unidades** vendidas y **154.045 clientes** únicos (clave tienda + cliente). La solución materializa agregados en Parquet, expone un dashboard web y entrena modelos de **segmentación K-Means (k = 4)** y **recomendación por co-ocurrencia de categorías** (1.250 reglas). Las métricas son relativas (volumen, frecuencia, diversidad), dado que el dataset **no incluye precios ni montos de pago**.
