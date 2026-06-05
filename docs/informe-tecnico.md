@@ -1,5 +1,6 @@
 # Informe técnico — Análisis y modelado analítico de transacciones de supermercado
 
+**Link repositorio:** https://github.com/juanC773/Transacciones-de-supermercado-PDD
 **Proyecto:** Transacciones de supermercado (PDD)  
 **Periodo analizado:** 1 de enero – 30 de junio de 2013  
 **Tiendas base del curso:** 102, 103, 107, 110 (+ tiendas nuevas registrables desde el dashboard)  
