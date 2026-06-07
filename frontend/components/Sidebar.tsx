@@ -93,7 +93,7 @@ export function Sidebar({
       await eliminarTienda(store.id);
       if (uploadStore?.id === store.id) setUploadStore(null);
       await loadStores();
-      setFilters((f) => ({ ...f, tiendas: f.tiendas.filter((t) => t !== store.id) }));
+      setFilters({ ...filters, tiendas: filters.tiendas.filter((t) => t !== store.id) });
       setStatusOk(true);
       setStatusMsg(`Tienda ${store.id} eliminada.`);
     } catch (err) {
