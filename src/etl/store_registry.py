@@ -5,6 +5,18 @@ import json
 from pathlib import Path
 
 from src.etl.load_transactions import RAW_TRANS
+from src.storage.gcs import (
+    blob_exists,
+    delete_blob,
+    download_blob,
+    ensure_local_file,
+    gcs_enabled,
+    stores_key,
+    touch_blob,
+    tran_key,
+    upload_file,
+    write_text,
+)
 
 BASE_STORES = frozenset({102, 103, 107, 110})
 BASE_STORE_NAMES: dict[int, str] = {
@@ -18,6 +30,12 @@ MAX_NAME_LEN = 80
 
 
 def _load_custom() -> dict[str, dict[str, str]]:
+    if gcs_enabled():
+        raw = read_text(stores_key())
+        if raw:
+            data = json.loads(raw)
+            custom = data.get("custom", {})
+            return custom if isinstance(custom, dict) else {}
     if not REGISTRY_FILE.exists():
         return {}
     data = json.loads(REGISTRY_FILE.read_text(encoding="utf-8"))
@@ -26,21 +44,39 @@ def _load_custom() -> dict[str, dict[str, str]]:
 
 
 def _save_custom(custom: dict[str, dict[str, str]]) -> None:
+    payload = json.dumps({"custom": custom}, indent=2, ensure_ascii=False)
     REGISTRY_FILE.parent.mkdir(parents=True, exist_ok=True)
-    REGISTRY_FILE.write_text(
-        json.dumps({"custom": custom}, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    REGISTRY_FILE.write_text(payload, encoding="utf-8")
+    write_text(stores_key(), payload)
 
 
 def store_csv_path(store_id: int) -> Path:
     return RAW_TRANS / f"{store_id}_Tran.csv"
 
 
+def store_csv_exists(store_id: int) -> bool:
+    path = store_csv_path(store_id)
+    if path.exists():
+        return True
+    if gcs_enabled():
+        return ensure_local_file(tran_key(store_id), path) or blob_exists(tran_key(store_id))
+    return False
+
+
+def ensure_store_csv_local(store_id: int) -> bool:
+    """Descarga el CSV de GCS si hace falta. Devuelve si existe."""
+    path = store_csv_path(store_id)
+    if path.exists():
+        return True
+    if gcs_enabled():
+        return download_blob(tran_key(store_id), path)
+    return path.exists()
+
+
 def _prune_custom_registry() -> dict[str, dict[str, str]]:
     """Quita del registro tiendas custom sin CSV (p. ej. borrado manual del archivo)."""
     custom = _load_custom()
-    stale = [sid for sid in custom if not store_csv_path(int(sid)).exists()]
+    stale = [sid for sid in custom if not store_csv_exists(int(sid))]
     if not stale:
         return custom
     for sid in stale:
@@ -49,6 +85,8 @@ def _prune_custom_registry() -> dict[str, dict[str, str]]:
         _save_custom(custom)
     elif REGISTRY_FILE.exists():
         REGISTRY_FILE.unlink()
+        if gcs_enabled():
+            delete_blob(stores_key())
     return custom
 
 
@@ -82,7 +120,7 @@ def create_store(store_id: int, nombre: str) -> dict:
     if store_id in BASE_STORES:
         errors.append(f"La tienda {store_id} ya forma parte del dataset del curso")
     custom = _load_custom()
-    csv_exists = store_csv_path(store_id).exists()
+    csv_exists = store_csv_exists(store_id)
     in_registry = str(store_id) in custom
 
     if csv_exists and in_registry:
@@ -94,6 +132,7 @@ def create_store(store_id: int, nombre: str) -> dict:
         _save_custom(custom)
         RAW_TRANS.mkdir(parents=True, exist_ok=True)
         store_csv_path(store_id).touch()
+        touch_blob(tran_key(store_id))
         return {"id": store_id, "nombre": nombre, "es_base": False}
     if not nombre:
         errors.append("El nombre no puede estar vacío")
@@ -107,6 +146,7 @@ def create_store(store_id: int, nombre: str) -> dict:
     _save_custom(custom)
     RAW_TRANS.mkdir(parents=True, exist_ok=True)
     store_csv_path(store_id).touch()
+    touch_blob(tran_key(store_id))
     return {"id": store_id, "nombre": nombre, "es_base": False}
 
 
@@ -123,9 +163,29 @@ def delete_store(store_id: int) -> dict:
         _save_custom(custom)
     elif REGISTRY_FILE.exists():
         REGISTRY_FILE.unlink()
+        if gcs_enabled():
+            delete_blob(stores_key())
 
     csv = store_csv_path(store_id)
     if csv.exists():
         csv.unlink()
+    if gcs_enabled():
+        delete_blob(tran_key(store_id))
 
     return {"id": store_id, "eliminada": True}
+
+
+def upload_store_csv_append(store_id: int, lineas: list[str]) -> int:
+    """Añade líneas al CSV de la tienda (local + GCS)."""
+    text = "\n".join(lineas)
+    dest = store_csv_path(store_id)
+    RAW_TRANS.mkdir(parents=True, exist_ok=True)
+    ensure_store_csv_local(store_id)
+    if dest.exists() and dest.stat().st_size > 0:
+        with dest.open("a", encoding="utf-8", newline="\n") as f:
+            f.write("\n" + text)
+    else:
+        dest.write_text(text + "\n", encoding="utf-8")
+    if gcs_enabled():
+        upload_file(dest, tran_key(store_id))
+    return len(lineas)

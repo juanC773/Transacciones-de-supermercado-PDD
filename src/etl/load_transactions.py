@@ -17,8 +17,25 @@ META_FILE = AGG_DIR / "meta.json"
 STORES_WITH_CATEGORY_IDS = {102}
 VALID_CATEGORY_MAX = 50
 
+def _sync_inputs_from_gcs() -> None:
+    from src.storage.gcs import gcs_enabled, sync_products_from_gcs, sync_transactions_from_gcs
+
+    if gcs_enabled():
+        sync_transactions_from_gcs(RAW_TRANS)
+        sync_products_from_gcs(RAW_PROD)
+
+
+def _sync_outputs_to_gcs() -> None:
+    from src.ml.pipeline import ML_DIR
+    from src.storage.gcs import gcs_enabled, sync_aggregates_to_gcs
+
+    if gcs_enabled():
+        sync_aggregates_to_gcs(AGG_DIR, ML_DIR)
+
+
 def _load_categories() -> dict[int, str]:
     """Mapa id_categoria -> nombre desde Categories.csv."""
+    _sync_inputs_from_gcs()
     cat_path = RAW_PROD / "Categories.csv"
     cats = pd.read_csv(
         cat_path, sep="|", header=None, names=["id_categoria", "nombre_categoria"]
@@ -251,7 +268,13 @@ def build_aggregates(force: bool = False) -> dict[str, pd.DataFrame]:
     Si ETL_ENGINE=spark, delega en spark_load_transactions; si falla, streaming Python.
     """
     import os
+    from src.storage.gcs import gcs_enabled, sync_aggregates_from_gcs
+    from src.ml.pipeline import ML_DIR
+
     AGG_DIR.mkdir(parents=True, exist_ok=True)
+    ML_DIR.mkdir(parents=True, exist_ok=True)
+    if gcs_enabled() and not force:
+        sync_aggregates_from_gcs(AGG_DIR, ML_DIR)
     marker = AGG_DIR / ".done"
     if marker.exists() and not force:
         return load_aggregates()
@@ -264,6 +287,7 @@ def build_aggregates(force: bool = False) -> dict[str, pd.DataFrame]:
         except Exception as exc:
             print(f"Spark ETL no disponible ({exc}); usando Python streaming.")
     # Rama Python: recorre CSV línea a línea sin cargar todo en RAM.
+    _sync_inputs_from_gcs()
     cats = _load_categories()
     prod_map = _load_product_to_categories()
     tran_files = sorted(RAW_TRANS.glob("*_Tran.csv"))
@@ -285,11 +309,12 @@ def build_aggregates(force: bool = False) -> dict[str, pd.DataFrame]:
         "fecha_max": str(max(k[0] for k in state.por_dia)),
         "tiendas": sorted({k[1] for k in state.por_dia}),
         "generado": datetime.now().isoformat(),
-        "etl_engine": "python-streaming",
+        "etl_engine": "python-streaming-gcs" if gcs_enabled() else "python-streaming",
     }
     META_FILE.write_text(json.dumps(meta, indent=2), encoding="utf-8")
     marker.touch()
     _train_ml_safe(frames)
+    _sync_outputs_to_gcs()
     return frames
 
 

@@ -9,10 +9,19 @@ _agg_cache: dict[str, pd.DataFrame] | None = None
 _agg_cache_mtime: float = 0.0
 
 
-def aggregates_mtime() -> float:
-    """Hora de modificación de .done; si cambia, hay que recargar caché."""
+def _local_mtime() -> float:
     marker = AGG_DIR / ".done"
     return marker.stat().st_mtime if marker.exists() else 0.0
+
+
+def aggregates_mtime() -> float:
+    """Hora de modificación de .done; si cambia, hay que recargar caché."""
+    from src.storage.gcs import aggregates_gcs_mtime, gcs_enabled
+
+    local = _local_mtime()
+    if gcs_enabled():
+        return max(local, aggregates_gcs_mtime())
+    return local
 
 
 def invalidate_aggregates_cache() -> None:
@@ -28,6 +37,12 @@ def ensure_aggregates() -> dict[str, pd.DataFrame]:
     Primera petición: lee Parquet. Siguientes: reutiliza RAM si .done no cambió.
     """
     global _agg_cache, _agg_cache_mtime
+    from src.ml.pipeline import ML_DIR
+    from src.storage.gcs import aggregates_gcs_mtime, gcs_enabled, sync_aggregates_from_gcs
+
+    if gcs_enabled() and aggregates_gcs_mtime() > _local_mtime():
+        sync_aggregates_from_gcs(AGG_DIR, ML_DIR)
+        invalidate_aggregates_cache()
 
     # Si nunca corrió el ETL, lo ejecuta ahora
     if not (AGG_DIR / ".done").exists():

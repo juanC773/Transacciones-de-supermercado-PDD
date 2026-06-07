@@ -1,0 +1,53 @@
+steps:
+
+  - name: gcr.io/cloud-builders/gsutil
+
+    entrypoint: bash
+
+    args:
+
+      - -c
+
+      - |
+
+        set -e
+
+        mkdir -p /workspace/data/processed/aggregates /workspace/data/processed/ml
+
+        mkdir -p /workspace/DataSet/DataSet/Products
+
+        # Agregados (ruta nueva o anidada legacy)
+
+        gsutil -m cp -r gs://transpdd-pdd-datos/salida/processed/aggregates/* /workspace/data/processed/aggregates/ 2>/dev/null || \
+
+        gsutil -m cp -r gs://transpdd-pdd-datos/salida/processed/processed/aggregates/* /workspace/data/processed/aggregates/
+
+        gsutil -m cp -r gs://transpdd-pdd-datos/salida/processed/ml/* /workspace/data/processed/ml/ 2>/dev/null || \
+
+        gsutil -m cp -r gs://transpdd-pdd-datos/salida/processed/processed/ml/* /workspace/data/processed/ml/
+
+        gsutil -m cp gs://transpdd-pdd-datos/DataSet/DataSet/Products/Categories.csv /workspace/DataSet/DataSet/Products/ 2>/dev/null || true
+
+        gsutil -m cp gs://transpdd-pdd-datos/DataSet/DataSet/Products/ProductCategory.csv /workspace/DataSet/DataSet/Products/ 2>/dev/null || true
+        test -f /workspace/DataSet/DataSet/Products/Categories.csv || echo "placeholder" > /workspace/DataSet/DataSet/Products/.keep
+
+  - name: gcr.io/cloud-builders/docker
+
+    args:
+
+      - build
+
+      - -t
+
+      - gcr.io/transpdd-tu-iniciales/transpdd-api
+
+      - -f
+
+      - cloud/gcp/Dockerfile
+
+      - .
+
+images:
+
+  - gcr.io/transpdd-tu-iniciales/transpdd-api
+

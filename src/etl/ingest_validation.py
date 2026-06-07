@@ -177,12 +177,8 @@ def validate_transactions_csv(content: str, required_store: int | None = None) -
     }
 
 
-def append_lines_to_store_file(tienda: int, lineas: list[str], dest_path) -> int:
+def append_lines_to_store_file(tienda: int, lineas: list[str], dest_path=None) -> int:
     """Añade líneas al final del CSV de la tienda. Devuelve cantidad agregada."""
-    text = "\n".join(lineas)
-    if dest_path.exists() and dest_path.stat().st_size > 0:
-        with dest_path.open("a", encoding="utf-8", newline="\n") as f:
-            f.write("\n" + text)
-    else:
-        dest_path.write_text(text + "\n", encoding="utf-8")
-    return len(lineas)
+    from src.etl.store_registry import upload_store_csv_append
+
+    return upload_store_csv_append(tienda, lineas)

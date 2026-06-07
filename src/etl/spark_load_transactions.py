@@ -2,6 +2,9 @@
 from __future__ import annotations
 import json
 import os
+import pathlib
+import shutil
+import socket
 from datetime import datetime
 import pandas as pd
 from pyspark.sql import SparkSession
@@ -42,18 +45,49 @@ ROW_SCHEMA = StructType(
 
 def _on_spark_cluster() -> bool:
     """Cluster gestionado (Dataproc, Databricks, Synapse): no usar local[*]."""
-    return bool(
-        os.environ.get("DATAPROC_VERSION")
-        or os.environ.get("DATABRICKS_RUNTIME_VERSION")
-        or os.environ.get("SYNAPSE_SPARK_POOL_USAGE")
-    )
+    if os.environ.get("DATAPROC_VERSION") or os.environ.get("DATABRICKS_RUNTIME_VERSION"):
+        return True
+    if os.environ.get("SYNAPSE_SPARK_POOL_USAGE"):
+        return True
+    # En Dataproc, python3 -m a veces no exporta DATAPROC_VERSION; el hostname termina en -m o -w-N.
+    host = socket.gethostname()
+    return host.endswith("-m") or "-w-" in host or host.endswith("-w")
+
+
+def _gcs_bucket() -> str:
+    return os.environ.get("GCS_BUCKET", "transpdd-pdd-datos").strip()
+
+
+def _tran_input_for_spark(tran_files: list) -> str | list[str]:
+    """
+    Dataproc: workers no ven /home/Admin del master → leer CSV desde GCS.
+    Local: rutas file:// en disco.
+    """
+    if _on_spark_cluster():
+        prefix = os.environ.get("GCS_TRANS_PREFIX", "DataSet/DataSet/Transactions").strip("/")
+        path = f"gs://{_gcs_bucket()}/{prefix}/*_Tran.csv"
+        print(f"Dataproc: leyendo transacciones desde {path}")
+        return path
+    return [pathlib.Path(f).resolve().as_uri() for f in tran_files]
+
+
+def _ship_src_to_workers(spark: SparkSession) -> None:
+    """Workers no tienen el repo; empaquetar src/ y enviarlo con addPyFile."""
+    root = pathlib.Path(__file__).resolve().parent.parent.parent
+    zip_path = "/tmp/pdd_src.zip"
+    shutil.make_archive("/tmp/pdd_src", "zip", root, "src")
+    spark.sparkContext.addPyFile(zip_path)
 
 
 def _spark_session() -> SparkSession:
     """Local: local[*]. Nube: sesión del cluster (driver + executors)."""
     builder = SparkSession.builder.appName("TransaccionesSupermercado")
     if _on_spark_cluster():
-        return builder.config("spark.sql.shuffle.partitions", "16").getOrCreate()
+        return (
+            builder.config("spark.sql.shuffle.partitions", "16")
+            .config("spark.sql.legacy.timeParserPolicy", "LEGACY")
+            .getOrCreate()
+        )
     return (
         builder.master("local[*]")
         .config("spark.sql.shuffle.partitions", "8")
@@ -62,7 +96,12 @@ def _spark_session() -> SparkSession:
     )
 
 
-def _line_to_rows(line: str, source: str, line_no: int) -> list[tuple]:
+def _line_to_rows(
+    line: str,
+    source: str,
+    line_no: int,
+    prod_map: dict[int, list[int]] | None = None,
+) -> list[tuple]:
     """
     Convierte UNA línea del CSV en VARIAS filas (una por categoría comprada).
 
@@ -88,7 +127,7 @@ def _line_to_rows(line: str, source: str, line_no: int) -> list[tuple]:
 
     # "3 7 7 12" -> categorías 1-50 (tienda 102 directo; otras vía ProductCategory.csv)
     raw_ids = [int(p) for p in productos_str.split() if p.isdigit()]
-    cats = resolve_ticket_categories(raw_ids, tienda, _product_map())
+    cats = resolve_ticket_categories(raw_ids, tienda, prod_map or _product_map())
     if not cats:
         return []
 
@@ -119,12 +158,15 @@ def build_aggregates_spark(force: bool = False) -> dict[str, pd.DataFrame]:
 
     spark = _spark_session()
     spark.sparkContext.setLogLevel("WARN")
+    if _on_spark_cluster():
+        _ship_src_to_workers(spark)
+    bc_prod_map = spark.sparkContext.broadcast(_product_map())
     try:
         # =================================================================
         # PASO 1: LEER CSV Y PARSEAR
         # =================================================================
         # Lee cada archivo como texto (una fila = una transacción cruda)
-        raw = spark.read.text([str(f) for f in tran_files]).withColumn(
+        raw = spark.read.text(_tran_input_for_spark(tran_files)).withColumn(
             "source_file", F.input_file_name()
         )
 
@@ -134,6 +176,7 @@ def build_aggregates_spark(force: bool = False) -> dict[str, pd.DataFrame]:
                 row_idx[0][0],  # contenido de la línea
                 row_idx[0][1].split("/")[-1] if "/" in row_idx[0][1] else row_idx[0][1],
                 int(row_idx[1]),  # número de línea
+                bc_prod_map.value,
             )
         )
 
@@ -161,9 +204,16 @@ def build_aggregates_spark(force: bool = False) -> dict[str, pd.DataFrame]:
             por_dia["mes"] = por_dia["fecha"].dt.month
             por_dia["dia_semana"] = por_dia["fecha"].dt.day_name()
 
-        # por_semana -> gráfico semanal
+        # por_semana -> gráfico semanal (weekofyear evita patrón yyyy-'W'ww roto en Spark 3+)
         por_semana = (
-            df.withColumn("anio_semana", F.date_format("fecha", "yyyy-'W'ww"))
+            df.withColumn(
+                "anio_semana",
+                F.concat(
+                    F.year("fecha").cast("string"),
+                    F.lit("-W"),
+                    F.format_string("%02d", F.weekofyear("fecha")),
+                ),
+            )
             .groupBy("anio_semana", "id_tienda")
             .agg(
                 F.count("*").alias("unidades"),

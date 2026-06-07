@@ -1,0 +1,38 @@
+"""Persistencia local o GCS según GCS_BUCKET."""
+from src.storage.gcs import (
+    append_text,
+    blob_exists,
+    delete_blob,
+    download_blob,
+    ensure_local_file,
+    gcs_enabled,
+    list_blobs,
+    mtime,
+    read_text,
+    sync_aggregates_from_gcs,
+    sync_aggregates_to_gcs,
+    sync_products_from_gcs,
+    sync_transactions_from_gcs,
+    touch_blob,
+    upload_file,
+    write_text,
+)
+
+__all__ = [
+    "append_text",
+    "blob_exists",
+    "delete_blob",
+    "download_blob",
+    "ensure_local_file",
+    "gcs_enabled",
+    "list_blobs",
+    "mtime",
+    "read_text",
+    "sync_aggregates_from_gcs",
+    "sync_aggregates_to_gcs",
+    "sync_products_from_gcs",
+    "sync_transactions_from_gcs",
+    "touch_blob",
+    "upload_file",
+    "write_text",
+]

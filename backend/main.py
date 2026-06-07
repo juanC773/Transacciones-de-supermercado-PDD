@@ -22,6 +22,8 @@ def _cors_origins() -> list[str]:
             origins.append(origin)
     return origins
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from backend.dashboard_service import build_dashboard_payload
@@ -35,7 +37,19 @@ from src.etl.dashboard_data import aggregates_mtime, invalidate_aggregates_cache
 from src.etl.load_transactions import AGG_DIR, RAW_TRANS, build_aggregates, load_meta
 from src.ml.pipeline import ml_ready, train_ml_models
 
-app = FastAPI(title="Transacciones Supermercado API", version="1.1.0")
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    from src.etl.load_transactions import RAW_PROD
+    from src.ml.pipeline import ML_DIR
+    from src.storage.gcs import gcs_enabled, sync_aggregates_from_gcs, sync_products_from_gcs
+
+    if gcs_enabled():
+        sync_aggregates_from_gcs(AGG_DIR, ML_DIR)
+        sync_products_from_gcs(RAW_PROD)
+    yield
+
+
+app = FastAPI(title="Transacciones Supermercado API", version="1.1.0", lifespan=_lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -61,10 +75,13 @@ def _parse_tiendas(tiendas: str) -> list[int]:
 
 @app.get("/api/health")
 def health():
+    from src.storage.gcs import gcs_enabled
+
     return {
         "status": "ok",
         "aggregates_ready": aggregates_mtime() > 0,
         "ml_ready": ml_ready(),
+        "gcs_enabled": gcs_enabled(),
     }
 
 
@@ -169,7 +186,7 @@ def eliminar_tienda(id_tienda: int):
 async def ingest_agregar_tienda(id_tienda: int, file: UploadFile = File(...)):
     """Añade líneas validadas al CSV de una tienda registrada."""
     from src.etl.ingest_validation import append_lines_to_store_file, validate_transactions_csv
-    from src.etl.store_registry import is_registered_store, store_csv_path
+    from src.etl.store_registry import ensure_store_csv_local, is_registered_store, store_csv_exists, store_csv_path
 
     if not is_registered_store(id_tienda):
         raise HTTPException(status_code=400, detail=f"Tienda {id_tienda} no registrada")
@@ -197,13 +214,14 @@ async def ingest_agregar_tienda(id_tienda: int, file: UploadFile = File(...)):
 
     RAW_TRANS.mkdir(parents=True, exist_ok=True)
     dest = store_csv_path(id_tienda)
-    if not dest.exists():
+    if not store_csv_exists(id_tienda):
         raise HTTPException(
             status_code=404,
             detail=f"No existe {dest.name}. Crea la tienda o restaura el dataset del curso.",
         )
+    ensure_store_csv_local(id_tienda)
 
-    n = append_lines_to_store_file(id_tienda, report["lineas_para_agregar"], dest)
+    n = append_lines_to_store_file(id_tienda, report["lineas_para_agregar"])
     return {
         "ok": True,
         "tienda": id_tienda,
