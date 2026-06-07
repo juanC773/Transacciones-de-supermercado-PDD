@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
-import type { Filters, Meta } from "@/lib/types";
+import { useCallback, useEffect, useState } from "react";
+import type { Filters, Meta, StoreInfo } from "@/lib/types";
 import { fmtCompact } from "@/lib/format";
-import { procesarNuevosDatos } from "@/lib/api";
+import { eliminarTienda, fetchTiendas, procesarNuevosDatos } from "@/lib/api";
 import { StoreUploadModal } from "./StoreUploadModal";
+import { CreateStoreModal } from "./CreateStoreModal";
 
-const STORES = [102, 103, 107, 110];
+const DEFAULT_STORE_IDS = [102, 103, 107, 110];
 
 export function Sidebar({
   filters,
@@ -23,30 +24,91 @@ export function Sidebar({
   regenerando: boolean;
   onDatosActualizados?: () => void;
 }) {
+  const [stores, setStores] = useState<StoreInfo[]>([]);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const [statusOk, setStatusOk] = useState(false);
   const [procesando, setProcesando] = useState(false);
-  const [uploadStore, setUploadStore] = useState<number | null>(null);
+  const [uploadStore, setUploadStore] = useState<StoreInfo | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+
+  const loadStores = useCallback(async () => {
+    try {
+      setStores(await fetchTiendas());
+    } catch {
+      setStores(DEFAULT_STORE_IDS.map((id) => ({ id, nombre: `Tienda ${id}`, es_base: true })));
+    }
+  }, []);
+
+  useEffect(() => {
+    loadStores();
+  }, [loadStores]);
 
   const toggleStore = (id: number) => {
     const has = filters.tiendas.includes(id);
     setFilters({
       ...filters,
-      tiendas: has ? filters.tiendas.filter((s) => s !== id) : [...filters.tiendas, id].sort(),
+      tiendas: has ? filters.tiendas.filter((s) => s !== id) : [...filters.tiendas, id].sort((a, b) => a - b),
     });
   };
 
   const onProcesar = async () => {
     setProcesando(true);
     setStatusMsg(null);
+    setStatusOk(false);
     try {
       await procesarNuevosDatos();
-      setStatusMsg("Listo. Recarga o espera — el dashboard ya usa los Parquet nuevos.");
+      setStatusOk(true);
+      setStatusMsg("Listo. El dashboard ya usa los Parquet nuevos.");
       onDatosActualizados?.();
     } catch (err) {
+      setStatusOk(false);
       setStatusMsg(err instanceof Error ? err.message : "Error al procesar");
     } finally {
       setProcesando(false);
     }
+  };
+
+  const onStoreCreated = async (store: StoreInfo) => {
+    await loadStores();
+    setFilters({
+      ...filters,
+      tiendas: [...filters.tiendas, store.id].sort((a, b) => a - b),
+    });
+    setStatusOk(true);
+    setStatusMsg(`Tienda ${store.id} creada. Usa + para cargar su CSV.`);
+  };
+
+  const onDeleteStore = async (store: StoreInfo) => {
+    if (
+      !window.confirm(
+        `¿Eliminar «${store.nombre}» (id ${store.id})? Se borra el registro y ${store.id}_Tran.csv.`,
+      )
+    ) {
+      return;
+    }
+    setDeletingId(store.id);
+    setStatusMsg(null);
+    try {
+      await eliminarTienda(store.id);
+      if (uploadStore?.id === store.id) setUploadStore(null);
+      await loadStores();
+      setFilters((f) => ({ ...f, tiendas: f.tiendas.filter((t) => t !== store.id) }));
+      setStatusOk(true);
+      setStatusMsg(`Tienda ${store.id} eliminada.`);
+    } catch (err) {
+      setStatusOk(false);
+      setStatusMsg(err instanceof Error ? err.message : "Error al eliminar");
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const resetFilters = async () => {
+    const list = await fetchTiendas().catch(() => stores);
+    setStores(list);
+    const ids = list.length > 0 ? list.map((s) => s.id) : DEFAULT_STORE_IDS;
+    setFilters({ tiendas: ids, fecha_min: "2013-01-01", fecha_max: "2013-06-30" });
   };
 
   return (
@@ -64,31 +126,58 @@ export function Sidebar({
 
         <div className="flex-1 space-y-7 overflow-y-auto px-5 py-6">
           <div>
-            <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted">Tiendas</p>
-            <p className="mb-2 text-[11px] text-muted">+ agrega transacciones al CSV de esa tienda</p>
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted">Tiendas</p>
+              <button
+                type="button"
+                onClick={() => setCreateOpen(true)}
+                className="rounded-md border border-border px-2 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/5"
+              >
+                + Nueva
+              </button>
+            </div>
+            <p className="mb-2 text-[11px] text-muted">
+              + sube CSV · × elimina tiendas creadas por ti
+            </p>
             <div className="space-y-2">
-              {STORES.map((id) => (
+              {stores.map((store) => (
                 <div
-                  key={id}
+                  key={store.id}
                   className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2.5"
                 >
-                  <label className="flex flex-1 cursor-pointer items-center gap-3">
+                  <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
                     <input
                       type="checkbox"
-                      checked={filters.tiendas.includes(id)}
-                      onChange={() => toggleStore(id)}
-                      className="h-4 w-4 rounded border-border text-primary"
+                      checked={filters.tiendas.includes(store.id)}
+                      onChange={() => toggleStore(store.id)}
+                      className="h-4 w-4 shrink-0 rounded border-border text-primary"
                     />
-                    <span className="text-sm font-medium">Tienda {id}</span>
+                    <span className="truncate text-sm font-medium" title={store.nombre}>
+                      {store.nombre}
+                      <span className="ml-1 text-xs text-muted">({store.id})</span>
+                    </span>
                   </label>
-                  <button
-                    type="button"
-                    title="Agregar datos a esta tienda"
-                    onClick={() => setUploadStore(id)}
-                    className="rounded-md border border-border px-2 py-1 text-xs font-medium text-primary hover:bg-primary/5"
-                  >
-                    +
-                  </button>
+                  <div className="flex shrink-0 gap-1">
+                    <button
+                      type="button"
+                      title="Agregar datos a esta tienda"
+                      onClick={() => setUploadStore(store)}
+                      className="rounded-md border border-border px-2 py-1 text-xs font-medium text-primary hover:bg-primary/5"
+                    >
+                      +
+                    </button>
+                    {!store.es_base && (
+                      <button
+                        type="button"
+                        title="Eliminar tienda"
+                        disabled={deletingId === store.id}
+                        onClick={() => onDeleteStore(store)}
+                        className="rounded-md border border-border px-2 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -123,9 +212,7 @@ export function Sidebar({
             <button
               type="button"
               className="mt-2 w-full rounded-lg border border-border py-2 text-xs text-muted hover:bg-background"
-              onClick={() =>
-                setFilters({ tiendas: STORES, fecha_min: "2013-01-01", fecha_max: "2013-06-30" })
-              }
+              onClick={resetFilters}
             >
               Restablecer filtros
             </button>
@@ -142,7 +229,11 @@ export function Sidebar({
               {procesando ? "Procesando ETL+ML…" : "Procesar nuevos datos"}
             </button>
             <p className="mt-1 text-[11px] text-muted">Después de usar + en una tienda</p>
-            {statusMsg && <p className="mt-2 text-xs text-muted">{statusMsg}</p>}
+            {statusMsg && (
+              <p className={`mt-2 text-xs ${statusOk ? "font-medium text-green-700" : "text-muted"}`}>
+                {statusMsg}
+              </p>
+            )}
           </div>
 
           <button
@@ -168,12 +259,19 @@ export function Sidebar({
 
       {uploadStore !== null && (
         <StoreUploadModal
-          storeId={uploadStore}
+          store={uploadStore}
           open
           onClose={() => setUploadStore(null)}
-          onAgregado={(n) => setStatusMsg(`${n} líneas en tienda ${uploadStore}. Pulsa «Procesar nuevos datos».`)}
+          onAgregado={({ lineasAgregadas, lineasValidas, lineasTotales }) => {
+            setStatusOk(true);
+            setStatusMsg(
+              `CSV OK: ${lineasAgregadas} líneas agregadas a ${uploadStore.nombre} (${lineasValidas}/${lineasTotales} validadas). Pulsa «Procesar nuevos datos».`,
+            );
+          }}
         />
       )}
+
+      <CreateStoreModal open={createOpen} onClose={() => setCreateOpen(false)} onCreated={onStoreCreated} />
     </>
   );
 }

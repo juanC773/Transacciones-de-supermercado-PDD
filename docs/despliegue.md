@@ -1,9 +1,11 @@
-# Despliegue: Azure (API) + Vercel (dashboard)
+# Despliegue: API + Vercel (dashboard)
 
-> **Spark con workers en la nube (Databricks + Storage + API + Vercel):**  
-> ver la guía completa **[despliegue-azure-spark.md](despliegue-azure-spark.md)**.
+> **Spark con workers en GCP (Dataproc + Cloud Storage + Cloud Run + Vercel):**  
+> ver **[despliegue-gcp-spark.md](despliegue-gcp-spark.md)** (recomendado).
 
-Orden recomendado (solo serving): **datos en tu PC → API en Azure → front en Vercel**.
+Orden recomendado aquí (solo serving): **datos en tu PC → API (Cloud Run o Azure) → front en Vercel**.
+
+> **Ingestión** (crear tienda, subir CSV, «Procesar»): funciona completo en **local**. En Cloud Run solo consulta el dashboard (ver nota al final de despliegue-gcp-spark.md).
 
 ---
 

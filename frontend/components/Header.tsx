@@ -17,9 +17,9 @@ export function Header({ filters }: { filters: Filters }) {
         </div>
         <div className="flex flex-wrap gap-2">
           <span className="rounded-full border border-border bg-background px-3 py-1 text-xs font-medium">
-            {filters.tiendas.length === 4
-              ? "Todas las tiendas"
-              : `${filters.tiendas.length} tiendas: ${filters.tiendas.join(", ")}`}
+            {filters.tiendas.length === 0
+              ? "Sin tiendas"
+              : `${filters.tiendas.length} tienda${filters.tiendas.length === 1 ? "" : "s"}: ${filters.tiendas.join(", ")}`}
           </span>
           <span className="rounded-full border border-border bg-background px-3 py-1 text-xs font-medium">
             {format(new Date(filters.fecha_min), "d MMM", { locale: es })} –{" "}

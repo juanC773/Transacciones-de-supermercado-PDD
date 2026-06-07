@@ -1,6 +1,8 @@
 """Construcción del payload JSON para GET /api/dashboard."""
 from __future__ import annotations
+import math
 from typing import Any
+import numpy as np
 import pandas as pd
 from src.etl.dashboard_data import ensure_aggregates, filter_bundle, summary_from_filtered
 from src.metrics.executive_summary import (
@@ -25,6 +27,24 @@ MESES_ES = {
 }
 DIAS_ES = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
 DIAS_EN = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+
+def _json_safe(obj: Any) -> Any:
+    """NaN/Inf de pandas/numpy rompen json.dumps(allow_nan=False) de Starlette."""
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_json_safe(v) for v in obj]
+    if isinstance(obj, (np.floating, float)):
+        v = float(obj)
+        if math.isnan(v) or math.isinf(v):
+            return 0.0
+        return v
+    if isinstance(obj, (np.integer, int)):
+        return int(obj)
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    return obj
 
 
 def _box_stats(values: pd.Series) -> dict[str, float] | None:
@@ -112,13 +132,18 @@ def build_dashboard_payload(
 
     # --- 5) Heatmap correlación (métricas de por_cliente) ---
     feat = filt["por_cliente"]
-    if feat.empty or len(feat) < 3:
+    cols = [c for c in FEATURE_LABELS if c in feat.columns]
+    if feat.empty or len(feat) < 3 or len(cols) < 2:
         heat_corr = {"labels": [], "matrix": []}
     else:
-        cols = [c for c in FEATURE_LABELS if c in feat.columns]
-        corr = feat[cols].corr()
-        labels = [FEATURE_LABELS[c] for c in cols]
-        heat_corr = {"labels": labels, "matrix": corr.values.tolist()}
+        sub = feat[cols]
+        # Con poca data o columnas constantes (p. ej. solo tienda 111) corr() da NaN.
+        if sub.std(numeric_only=True).min(skipna=True) == 0:
+            heat_corr = {"labels": [], "matrix": []}
+        else:
+            corr = sub.corr().fillna(0.0)
+            labels = [FEATURE_LABELS[c] for c in cols]
+            heat_corr = {"labels": labels, "matrix": corr.values.tolist()}
 
     # --- 6) Heatmap actividad día x mes ---
     pivot_data = actividad_dia_mes_from_agg(filt["por_dia"])
@@ -138,15 +163,17 @@ def build_dashboard_payload(
         }
 
     # --- 7) Un solo JSON para todo el frontend ---
-    return {
-        "kpis": kpis,
-        "top_categorias": _df_records(top_cat),
-        "top_clientes": _df_records(top_cli),
-        "actividad_dia_semana": _df_records(por_dia_sem),
-        "categorias_volumen": _df_records(cats_vol),
-        "serie_tiempo_dia": _df_records(serie_dia, date_cols=["fecha"]),
-        "serie_tiempo_semana": serie_sem.to_dict(orient="records"),
-        "boxplot_cliente": box_cli_out,
-        "heatmap_correlacion": heat_corr,
-        "heatmap_actividad": heat_act,
-    }
+    return _json_safe(
+        {
+            "kpis": kpis,
+            "top_categorias": _df_records(top_cat),
+            "top_clientes": _df_records(top_cli),
+            "actividad_dia_semana": _df_records(por_dia_sem),
+            "categorias_volumen": _df_records(cats_vol),
+            "serie_tiempo_dia": _df_records(serie_dia, date_cols=["fecha"]),
+            "serie_tiempo_semana": serie_sem.to_dict(orient="records"),
+            "boxplot_cliente": box_cli_out,
+            "heatmap_correlacion": heat_corr,
+            "heatmap_actividad": heat_act,
+        }
+    )

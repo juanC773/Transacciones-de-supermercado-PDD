@@ -27,6 +27,8 @@ derby.log
 # Dataset original (copiar localmente — ver DataSet/README.md)
 DataSet/**
 !DataSet/README.md
+!DataSet/ejemplos-prueba/
+!DataSet/ejemplos-prueba/**
 
 # Salida del ETL y modelos (regenerar con python -m src.etl.load_transactions)
 data/

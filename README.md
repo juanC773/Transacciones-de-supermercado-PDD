@@ -5,6 +5,9 @@ Sistema de analítica sobre transacciones de retail: ETL con PySpark, API REST y
 **Curso:** Procesamiento distribuido de datos  
 **Periodo de datos:** enero–junio 2013 · Tiendas 102, 103, 107, 110
 
+
+**Autores:** Juan Calderon y Pablo Guzman
+
 ---
 
 ## Documentación
@@ -14,8 +17,10 @@ Sistema de analítica sobre transacciones de retail: ETL con PySpark, API REST y
 | [docs/instalacion.md](docs/instalacion.md) | Requisitos, instalación, ETL y puesta en marcha |
 | [docs/manual-usuario.md](docs/manual-usuario.md) | Uso del dashboard, filtros e ingestión de datos |
 | [docs/arquitectura.md](docs/arquitectura.md) | Arquitectura, flujo de datos y mapa del código |
-| [docs/despliegue.md](docs/despliegue.md) | Azure (API) + Vercel (rápido) |
-| [docs/despliegue-azure-spark.md](docs/despliegue-azure-spark.md) | Databricks Spark + Storage + API + Vercel |
+| [docs/informe-tecnico.md](docs/informe-tecnico.md) | Informe técnico: datos, metodología, hallazgos, modelos y conclusiones |
+| [docs/despliegue-gcp-spark.md](docs/despliegue-gcp-spark.md) | GCP Dataproc Spark + Cloud Run + Vercel (recomendado) |
+| [docs/despliegue.md](docs/despliegue.md) | Deploy rápido API + Vercel (sin cluster) |
+| [docs/despliegue-azure-spark.md](docs/despliegue-azure-spark.md) | Azure Databricks (legacy) |
 | [DataSet/README.md](DataSet/README.md) | Estructura y formato de los CSV de entrada |
 
 ---
@@ -88,7 +93,10 @@ El ETL se ejecuta en batch. El dashboard consulta agregados ya materializados y 
 | GET | `/api/segmentacion` | Clusters K-Means y scatter PCA |
 | GET | `/api/recomendaciones/cliente` | Sugerencias por cliente |
 | GET | `/api/recomendaciones/categoria` | Sugerencias por categoría |
-| POST | `/api/ingest/tienda/{id}` | Agregar líneas al CSV de una tienda |
+| GET | `/api/tiendas` | Listar tiendas (base + creadas por el usuario) |
+| POST | `/api/tiendas` | Crear tienda nueva (id + nombre) |
+| DELETE | `/api/tiendas/{id}` | Eliminar tienda custom (no las del curso) |
+| POST | `/api/ingest/tienda/{id}` | Agregar líneas al CSV de una tienda registrada |
 | POST | `/api/ingest/procesar` | Reprocesar ETL y modelos ML |
 | POST | `/api/etl/regenerar` | Regenerar agregados desde cero |
 

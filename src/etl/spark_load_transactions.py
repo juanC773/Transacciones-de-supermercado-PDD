@@ -41,9 +41,10 @@ ROW_SCHEMA = StructType(
 
 
 def _on_spark_cluster() -> bool:
-    """Databricks o Synapse Spark pool: usar el cluster adjunto, no local[*]."""
+    """Cluster gestionado (Dataproc, Databricks, Synapse): no usar local[*]."""
     return bool(
-        os.environ.get("DATABRICKS_RUNTIME_VERSION")
+        os.environ.get("DATAPROC_VERSION")
+        or os.environ.get("DATABRICKS_RUNTIME_VERSION")
         or os.environ.get("SYNAPSE_SPARK_POOL_USAGE")
     )
 

@@ -1,4 +1,4 @@
-export const ALLOWED_STORES = [102, 103, 107, 110] as const;
+export const BASE_STORES = [102, 103, 107, 110] as const;
 
 export type TranCsvValidation = {
   ok: boolean;
@@ -29,7 +29,7 @@ function validateLine(line: string, lineNo: number, expectedStore: number): stri
 
   const [fechaS, tiendaS, clienteS, prodS] = parts.map((p) => p.trim());
   if (!/^\d{4}-\d{2}-\d{2}$/.test(fechaS) || Number.isNaN(Date.parse(fechaS))) {
-    errs.push(`Línea ${lineNo}: fecha inválida '${fechaS}'`);
+    errs.push(`Línea ${lineNo}: fecha inválida '${fechaS}' (use AAAA-MM-DD)`);
   }
 
   const tienda = parseInt(tiendaS, 10);
@@ -66,17 +66,6 @@ function validateLine(line: string, lineNo: number, expectedStore: number): stri
 }
 
 export function validateTranCsvForStore(content: string, storeId: number): TranCsvValidation {
-  if (!ALLOWED_STORES.includes(storeId as (typeof ALLOWED_STORES)[number])) {
-    return {
-      ok: false,
-      errores: [`Tienda ${storeId} no permitida`],
-      advertencias: [],
-      lineas_validas: 0,
-      lineas_totales: 0,
-      tienda: storeId,
-    };
-  }
-
   const nonEmpty = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n").filter((l) => l.trim());
   if (nonEmpty.length === 0) {
     return {
@@ -95,8 +84,8 @@ export function validateTranCsvForStore(content: string, storeId: number): TranC
     const lineErrs = validateLine(nonEmpty[i], i + 1, storeId);
     if (lineErrs.length) errores.push(...lineErrs);
     else valid += 1;
-    if (errores.length >= 12) {
-      errores.push("…");
+    if (errores.length >= 15) {
+      errores.push("… (más errores omitidos)");
       break;
     }
   }

@@ -9,6 +9,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from pydantic import BaseModel, Field
+
 
 def _cors_origins() -> list[str]:
     """Local dev + orígenes extra en CORS_ORIGINS (separados por coma)."""
@@ -43,6 +45,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+class CreateStoreBody(BaseModel):
+    id_tienda: int = Field(..., gt=0, description="Id numérico de la tienda (columna 2 del CSV)")
+    nombre: str = Field(..., min_length=1, max_length=80, description="Nombre visible en el dashboard")
 
 
 def _parse_tiendas(tiendas: str) -> list[int]:
@@ -130,20 +137,42 @@ def recomendaciones_categoria(
     return build_recommendations_categoria(id_categoria)
 
 
+@app.get("/api/tiendas")
+def list_tiendas():
+    from src.etl.store_registry import list_stores
+
+    return {"tiendas": list_stores()}
+
+
+@app.post("/api/tiendas")
+def crear_tienda(body: CreateStoreBody):
+    from src.etl.store_registry import create_store
+
+    try:
+        tienda = create_store(body.id_tienda, body.nombre.strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "tienda": tienda}
+
+
+@app.delete("/api/tiendas/{id_tienda}")
+def eliminar_tienda(id_tienda: int):
+    from src.etl.store_registry import delete_store
+
+    try:
+        return {"ok": True, **delete_store(id_tienda)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/api/ingest/tienda/{id_tienda}")
 async def ingest_agregar_tienda(id_tienda: int, file: UploadFile = File(...)):
-    """
-    Añade líneas validadas al CSV existente de la tienda (102, 103, 107 u 110).
-    No crea tiendas nuevas.
-    """
-    from src.etl.ingest_validation import (
-        ALLOWED_STORES,
-        append_lines_to_store_file,
-        validate_transactions_csv,
-    )
+    """Añade líneas validadas al CSV de una tienda registrada."""
+    from src.etl.ingest_validation import append_lines_to_store_file, validate_transactions_csv
+    from src.etl.store_registry import is_registered_store, store_csv_path
 
-    if id_tienda not in ALLOWED_STORES:
-        raise HTTPException(status_code=400, detail="Solo tiendas 102, 103, 107 o 110")
+    if not is_registered_store(id_tienda):
+        raise HTTPException(status_code=400, detail=f"Tienda {id_tienda} no registrada")
     if not file.filename:
         raise HTTPException(status_code=400, detail="Archivo sin nombre")
     content = await file.read()
@@ -167,11 +196,11 @@ async def ingest_agregar_tienda(id_tienda: int, file: UploadFile = File(...)):
         )
 
     RAW_TRANS.mkdir(parents=True, exist_ok=True)
-    dest = RAW_TRANS / f"{id_tienda}_Tran.csv"
+    dest = store_csv_path(id_tienda)
     if not dest.exists():
         raise HTTPException(
             status_code=404,
-            detail=f"No existe {dest.name}. Restaura el dataset del curso en Transactions/.",
+            detail=f"No existe {dest.name}. Crea la tienda o restaura el dataset del curso.",
         )
 
     n = append_lines_to_store_file(id_tienda, report["lineas_para_agregar"], dest)
