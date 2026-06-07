@@ -89,7 +89,12 @@ export default function HomePage() {
       await loadDashboard(filters);
       setSegVersion((v) => v + 1);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Error al regenerar");
+      const raw = e instanceof Error ? e.message : "Error al regenerar";
+      setError(
+        raw === "Failed to fetch" || raw.includes("abort")
+          ? "ETL en curso. Espera ~30 s y recarga (F5); los datos suelen estar listos."
+          : raw,
+      );
     } finally {
       setRegenerando(false);
     }
@@ -109,10 +114,19 @@ export default function HomePage() {
         onRegenerar={onRegenerar}
         regenerando={regenerando}
         onDatosActualizados={async () => {
-          const m = await fetchMeta();
-          setMeta(m);
-          await loadDashboard(filters);
-          setSegVersion((v) => v + 1);
+          await new Promise((r) => setTimeout(r, 3000));
+          for (let i = 0; i < 4; i++) {
+            try {
+              const m = await fetchMeta();
+              setMeta(m);
+              await loadDashboard(filters);
+              setSegVersion((v) => v + 1);
+              setError(null);
+              return;
+            } catch {
+              await new Promise((r) => setTimeout(r, 2000));
+            }
+          }
         }}
       />
 

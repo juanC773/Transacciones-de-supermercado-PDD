@@ -11,6 +11,7 @@ from src.storage.gcs import (
     download_blob,
     ensure_local_file,
     gcs_enabled,
+    read_text,
     stores_key,
     touch_blob,
     tran_key,

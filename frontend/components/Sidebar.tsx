@@ -63,7 +63,12 @@ export function Sidebar({
       onDatosActualizados?.();
     } catch (err) {
       setStatusOk(false);
-      setStatusMsg(err instanceof Error ? err.message : "Error al procesar");
+      const raw = err instanceof Error ? err.message : "Error al procesar";
+      setStatusMsg(
+        raw === "Failed to fetch" || raw.includes("abort")
+          ? "El ETL puede haber terminado en el servidor. Espera ~30 s y recarga la página (F5)."
+          : raw,
+      );
     } finally {
       setProcesando(false);
     }

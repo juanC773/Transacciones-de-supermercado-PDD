@@ -2,6 +2,17 @@ import type { DashboardData, Filters, Meta, RecomendacionCategoria, Segmentacion
 import { formatUploadError } from "./validateTranCsv";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const ETL_TIMEOUT_MS = 280_000;
+
+async function fetchLong(url: string, init?: RequestInit): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ETL_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function filterParams(filters: Filters) {
   return new URLSearchParams({
@@ -55,7 +66,7 @@ export async function fetchDashboard(filters: Filters): Promise<DashboardData> {
 }
 
 export async function regenerarEtl(): Promise<void> {
-  const res = await fetch(`${API_URL}/api/etl/regenerar`, { method: "POST" });
+  const res = await fetchLong(`${API_URL}/api/etl/regenerar`, { method: "POST" });
   if (!res.ok) throw new Error("Error al regenerar ETL");
 }
 
@@ -102,6 +113,6 @@ export async function agregarDatosTienda(
 }
 
 export async function procesarNuevosDatos(): Promise<void> {
-  const res = await fetch(`${API_URL}/api/ingest/procesar`, { method: "POST" });
+  const res = await fetchLong(`${API_URL}/api/ingest/procesar`, { method: "POST" });
   if (!res.ok) throw new Error("Error al procesar nuevos datos");
 }
