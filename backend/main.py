@@ -38,6 +38,7 @@ from backend.ml_service import (
     build_segmentation_payload,
     invalidate_ml_cache,
 )
+from backend.etl_service import etl_job_status, run_full_etl
 from src.etl.dashboard_data import aggregates_mtime, invalidate_aggregates_cache
 from src.etl.load_transactions import AGG_DIR, RAW_TRANS, build_aggregates, load_meta
 from src.ml.pipeline import ml_ready, train_ml_models
@@ -78,26 +79,9 @@ def _parse_tiendas(tiendas: str) -> list[int]:
         raise HTTPException(status_code=400, detail="tiendas inválidas") from exc
 
 
-def _run_full_etl() -> None:
-    """Reconstruye agregados Parquet + ML desde los CSV actuales (GCS o local)."""
-    import gc
-
-    from src.etl.load_transactions import RAW_PROD, _sync_inputs_from_gcs
-    from src.storage.gcs import gcs_enabled, sync_products_from_gcs
-
-    invalidate_aggregates_cache()
-    invalidate_ml_cache()
-    gc.collect()
-    if gcs_enabled():
-        sync_products_from_gcs(RAW_PROD)
-    _sync_inputs_from_gcs()
-    build_aggregates(force=True)
-    invalidate_aggregates_cache()
-    invalidate_ml_cache()
-
-
 @app.get("/api/health")
 def health():
+    from src.storage.dataproc import dataproc_etl_enabled
     from src.storage.gcs import gcs_enabled
 
     return {
@@ -105,6 +89,7 @@ def health():
         "aggregates_ready": aggregates_mtime() > 0,
         "ml_ready": ml_ready(),
         "gcs_enabled": gcs_enabled(),
+        "dataproc_etl_enabled": dataproc_etl_enabled(),
     }
 
 
@@ -119,12 +104,21 @@ def meta():
 @app.post("/api/etl/regenerar")
 def regenerar_etl():
     try:
-        _run_full_etl()
+        result = run_full_etl()
     except FileNotFoundError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"ETL falló: {exc}") from exc
-    return {"ok": True, "meta": load_meta(), "ml_ready": ml_ready()}
+    return {"ok": True, **result}
+
+
+@app.get("/api/etl/job/{job_id}")
+def etl_job(job_id: str):
+    """Estado de un job Spark en Dataproc (polling tras Procesar)."""
+    try:
+        return etl_job_status(job_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/ml/entrenar")
@@ -207,7 +201,7 @@ def eliminar_tienda(id_tienda: int):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
-        _run_full_etl()
+        etl_result = run_full_etl()
     except FileNotFoundError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
@@ -215,9 +209,8 @@ def eliminar_tienda(id_tienda: int):
     return {
         "ok": True,
         **result,
-        "meta": load_meta(),
-        "ml_ready": ml_ready(),
-        "mensaje": f"Tienda {id_tienda} eliminada y agregados actualizados sin sus datos.",
+        **etl_result,
+        "mensaje": f"Tienda {id_tienda} eliminada. ETL Spark en Dataproc en curso o completado.",
     }
 
 
@@ -272,16 +265,15 @@ async def ingest_agregar_tienda(id_tienda: int, file: UploadFile = File(...)):
 
 @app.post("/api/ingest/procesar")
 def ingest_procesar():
-    """ETL completo + entrenamiento ML tras incorporar nuevos CSV."""
+    """ETL completo en Dataproc Spark (o Python local) tras incorporar nuevos CSV."""
     try:
-        _run_full_etl()
+        result = run_full_etl()
     except FileNotFoundError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"ETL falló: {exc}") from exc
     return {
         "ok": True,
-        "meta": load_meta(),
-        "ml_ready": ml_ready(),
+        **result,
         "aggregates_dir": str(AGG_DIR),
     }

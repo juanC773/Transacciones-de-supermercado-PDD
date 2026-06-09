@@ -6,6 +6,7 @@ RUN pip install --no-cache-dir -r requirements-prod.txt
 
 COPY backend ./backend
 COPY src ./src
+COPY cloud/dataproc ./cloud/dataproc
 # Agregados embebidos en la imagen; en producción GCS tiene prioridad.
 COPY data/processed ./data/processed
 # Catálogo de productos (también se obtiene de GCS en el build de Cloud Build).

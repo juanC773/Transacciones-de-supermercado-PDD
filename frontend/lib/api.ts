@@ -3,6 +3,44 @@ import { formatUploadError } from "./validateTranCsv";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const ETL_TIMEOUT_MS = 280_000;
+const DATAPROC_POLL_MS = 5_000;
+const DATAPROC_MAX_POLLS = 120;
+
+type EtlRunResponse = {
+  ok?: boolean;
+  async?: boolean;
+  job_id?: string;
+  engine?: string;
+  state?: string;
+  mensaje?: string;
+};
+
+async function pollDataprocJob(jobId: string): Promise<void> {
+  for (let i = 0; i < DATAPROC_MAX_POLLS; i++) {
+    await new Promise((r) => setTimeout(r, DATAPROC_POLL_MS));
+    const res = await fetch(`${API_URL}/api/etl/job/${encodeURIComponent(jobId)}`, { cache: "no-store" });
+    if (!res.ok) throw new Error("No se pudo consultar el job de Dataproc");
+    const data = (await res.json()) as { state?: string; ok?: boolean; detail?: string };
+    if (data.state === "DONE" && data.ok) return;
+    if (data.state === "ERROR" || data.state === "CANCELLED") {
+      throw new Error(data.detail ?? `Job Dataproc terminó en estado ${data.state}`);
+    }
+  }
+  throw new Error("El ETL en Dataproc tardó demasiado. Revisa el cluster y vuelve a intentar.");
+}
+
+async function waitForEtlResult(res: Response): Promise<EtlRunResponse> {
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const detail = (err as { detail?: string }).detail;
+    throw new Error(typeof detail === "string" ? detail : "Error en el ETL");
+  }
+  const data = (await res.json()) as EtlRunResponse;
+  if (data.async && data.job_id) {
+    await pollDataprocJob(data.job_id);
+  }
+  return data;
+}
 
 async function fetchLong(url: string, init?: RequestInit): Promise<Response> {
   const ctrl = new AbortController();
@@ -46,12 +84,7 @@ export async function crearTienda(idTienda: number, nombre: string): Promise<Sto
 
 export async function eliminarTienda(idTienda: number): Promise<{ mensaje: string }> {
   const res = await fetchLong(`${API_URL}/api/tiendas/${idTienda}`, { method: "DELETE" });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    const detail = (err as { detail?: string }).detail;
-    throw new Error(typeof detail === "string" ? detail : "No se pudo eliminar la tienda");
-  }
-  const data = (await res.json()) as { mensaje?: string };
+  const data = (await waitForEtlResult(res)) as EtlRunResponse & { mensaje?: string };
   return { mensaje: data.mensaje ?? "Tienda eliminada." };
 }
 
@@ -69,7 +102,7 @@ export async function fetchDashboard(filters: Filters): Promise<DashboardData> {
 
 export async function regenerarEtl(): Promise<void> {
   const res = await fetchLong(`${API_URL}/api/etl/regenerar`, { method: "POST" });
-  if (!res.ok) throw new Error("Error al regenerar ETL");
+  await waitForEtlResult(res);
 }
 
 export async function fetchSegmentacion(filters: Filters): Promise<SegmentacionData> {
@@ -116,9 +149,5 @@ export async function agregarDatosTienda(
 
 export async function procesarNuevosDatos(): Promise<void> {
   const res = await fetchLong(`${API_URL}/api/ingest/procesar`, { method: "POST" });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    const detail = (err as { detail?: string }).detail;
-    throw new Error(typeof detail === "string" ? detail : "Error al procesar nuevos datos");
-  }
+  await waitForEtlResult(res);
 }

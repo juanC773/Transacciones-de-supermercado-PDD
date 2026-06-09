@@ -73,6 +73,8 @@ def _tran_input_for_spark(tran_files: list) -> str | list[str]:
 
 def _ship_src_to_workers(spark: SparkSession) -> None:
     """Workers no tienen el repo; empaquetar src/ y enviarlo con addPyFile."""
+    if os.environ.get("PDD_ETL_FROM_GCS"):
+        return  # Job enviado desde Cloud Run: python_file_uris ya incluye pdd_src.zip
     root = pathlib.Path(__file__).resolve().parent.parent.parent
     zip_path = "/tmp/pdd_src.zip"
     shutil.make_archive("/tmp/pdd_src", "zip", root, "src")
@@ -151,9 +153,15 @@ def build_aggregates_spark(force: bool = False) -> dict[str, pd.DataFrame]:
         return load_aggregates()
 
     # Nombres de categorías (Categories.csv) para el gráfico de donut/top
+    if _on_spark_cluster() and os.environ.get("GCS_BUCKET"):
+        from src.etl.load_transactions import RAW_PROD
+        from src.storage.gcs import sync_products_from_gcs
+
+        sync_products_from_gcs(RAW_PROD)
+
     cats_map = _load_categories()
     tran_files = sorted(RAW_TRANS.glob("*_Tran.csv"))
-    if not tran_files:
+    if not tran_files and not _on_spark_cluster():
         raise FileNotFoundError(f"No se encontraron archivos *_Tran.csv en {RAW_TRANS}")
 
     spark = _spark_session()
@@ -315,8 +323,10 @@ def build_aggregates_spark(force: bool = False) -> dict[str, pd.DataFrame]:
         }
         META_FILE.write_text(json.dumps(meta, indent=2), encoding="utf-8")
         marker.touch()  # marca que el ETL terminó OK
-        from src.etl.load_transactions import _train_ml_safe
+        from src.etl.load_transactions import _train_ml_safe, _sync_outputs_to_gcs
         _train_ml_safe(frames)
+        if _on_spark_cluster() and os.environ.get("GCS_BUCKET"):
+            _sync_outputs_to_gcs()
         return frames
     finally:
         # En notebook Databricks no cerrar la sesión compartida del cluster.

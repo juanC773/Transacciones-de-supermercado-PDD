@@ -59,14 +59,14 @@ export function Sidebar({
     try {
       await procesarNuevosDatos();
       setStatusOk(true);
-      setStatusMsg("Listo. Dashboard actualizado con los datos nuevos.");
+      setStatusMsg("Listo. ETL Spark en Dataproc completado; dashboard actualizado.");
       onDatosActualizados?.();
     } catch (err) {
       setStatusOk(false);
       const raw = err instanceof Error ? err.message : "Error al procesar";
       setStatusMsg(
         raw === "Failed to fetch" || raw.includes("abort")
-          ? "El servidor se quedó sin memoria o tardó demasiado. Espera 1 min y vuelve a pulsar «Procesar»; si persiste, recarga (F5)."
+          ? "El ETL en Dataproc sigue en curso o hubo timeout. Espera y revisa que cluster-pdd esté RUNNING."
           : raw,
       );
     } finally {

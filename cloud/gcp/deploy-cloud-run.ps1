@@ -21,6 +21,6 @@ gcloud run deploy $Service `
   --memory 4Gi `
   --cpu 2 `
   --timeout 300 `
-  --set-env-vars "ETL_ENGINE=python,GCS_BUCKET=transpdd-pdd-datos,GCS_DATA_PREFIX=DataSet/DataSet,GCS_OUTPUT_PREFIX=salida/processed"
+  --set-env-vars "ETL_ENGINE=python,GCS_BUCKET=transpdd-pdd-datos,GCS_DATA_PREFIX=DataSet/DataSet,GCS_OUTPUT_PREFIX=salida/processed,DATAPROC_ETL_ENABLED=true,DATAPROC_CLUSTER=cluster-pdd,DATAPROC_REGION=us-central1,GCP_PROJECT=$Project"
 
 Write-Host "==> Listo. Prueba /api/health (gcs_enabled: true)"
