@@ -18,7 +18,7 @@ gcloud run deploy $Service `
   --region $Region `
   --project $Project `
   --allow-unauthenticated `
-  --memory 2Gi `
+  --memory 4Gi `
   --cpu 2 `
   --timeout 300 `
   --set-env-vars "ETL_ENGINE=python,GCS_BUCKET=transpdd-pdd-datos,GCS_DATA_PREFIX=DataSet/DataSet,GCS_OUTPUT_PREFIX=salida/processed"

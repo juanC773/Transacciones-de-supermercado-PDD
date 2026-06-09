@@ -13,8 +13,13 @@ from pydantic import BaseModel, Field
 
 
 def _cors_origins() -> list[str]:
-    """Local dev + orígenes extra en CORS_ORIGINS (separados por coma)."""
-    origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    """Orígenes permitidos: desarrollo local, producción y CORS_ORIGINS."""
+    origins = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "https://pj-supermercados.lat",
+        "https://www.pj-supermercados.lat",
+    ]
     extra = os.environ.get("CORS_ORIGINS", "")
     for origin in extra.split(","):
         origin = origin.strip().rstrip("/")
@@ -73,6 +78,24 @@ def _parse_tiendas(tiendas: str) -> list[int]:
         raise HTTPException(status_code=400, detail="tiendas inválidas") from exc
 
 
+def _run_full_etl() -> None:
+    """Reconstruye agregados Parquet + ML desde los CSV actuales (GCS o local)."""
+    import gc
+
+    from src.etl.load_transactions import RAW_PROD, _sync_inputs_from_gcs
+    from src.storage.gcs import gcs_enabled, sync_products_from_gcs
+
+    invalidate_aggregates_cache()
+    invalidate_ml_cache()
+    gc.collect()
+    if gcs_enabled():
+        sync_products_from_gcs(RAW_PROD)
+    _sync_inputs_from_gcs()
+    build_aggregates(force=True)
+    invalidate_aggregates_cache()
+    invalidate_ml_cache()
+
+
 @app.get("/api/health")
 def health():
     from src.storage.gcs import gcs_enabled
@@ -95,9 +118,12 @@ def meta():
 
 @app.post("/api/etl/regenerar")
 def regenerar_etl():
-    build_aggregates(force=True)
-    invalidate_aggregates_cache()
-    invalidate_ml_cache()
+    try:
+        _run_full_etl()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"ETL falló: {exc}") from exc
     return {"ok": True, "meta": load_meta(), "ml_ready": ml_ready()}
 
 
@@ -177,9 +203,22 @@ def eliminar_tienda(id_tienda: int):
     from src.etl.store_registry import delete_store
 
     try:
-        return {"ok": True, **delete_store(id_tienda)}
+        result = delete_store(id_tienda)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        _run_full_etl()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"ETL tras borrado falló: {exc}") from exc
+    return {
+        "ok": True,
+        **result,
+        "meta": load_meta(),
+        "ml_ready": ml_ready(),
+        "mensaje": f"Tienda {id_tienda} eliminada y agregados actualizados sin sus datos.",
+    }
 
 
 @app.post("/api/ingest/tienda/{id_tienda}")
@@ -234,9 +273,12 @@ async def ingest_agregar_tienda(id_tienda: int, file: UploadFile = File(...)):
 @app.post("/api/ingest/procesar")
 def ingest_procesar():
     """ETL completo + entrenamiento ML tras incorporar nuevos CSV."""
-    build_aggregates(force=True)
-    invalidate_aggregates_cache()
-    invalidate_ml_cache()
+    try:
+        _run_full_etl()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"ETL falló: {exc}") from exc
     return {
         "ok": True,
         "meta": load_meta(),

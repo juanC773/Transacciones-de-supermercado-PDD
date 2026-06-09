@@ -59,14 +59,14 @@ export function Sidebar({
     try {
       await procesarNuevosDatos();
       setStatusOk(true);
-      setStatusMsg("Listo. El dashboard ya usa los Parquet nuevos.");
+      setStatusMsg("Listo. Dashboard actualizado con los datos nuevos.");
       onDatosActualizados?.();
     } catch (err) {
       setStatusOk(false);
       const raw = err instanceof Error ? err.message : "Error al procesar";
       setStatusMsg(
         raw === "Failed to fetch" || raw.includes("abort")
-          ? "El ETL puede haber terminado en el servidor. Espera ~30 s y recarga la página (F5)."
+          ? "El servidor se quedó sin memoria o tardó demasiado. Espera 1 min y vuelve a pulsar «Procesar»; si persiste, recarga (F5)."
           : raw,
       );
     } finally {
@@ -87,7 +87,7 @@ export function Sidebar({
   const onDeleteStore = async (store: StoreInfo) => {
     if (
       !window.confirm(
-        `¿Eliminar «${store.nombre}» (id ${store.id})? Se borra el registro y ${store.id}_Tran.csv.`,
+        `¿Eliminar «${store.nombre}» (id ${store.id})? Se borra el CSV y se reprocesan los datos (~1–2 min).`,
       )
     ) {
       return;
@@ -95,12 +95,13 @@ export function Sidebar({
     setDeletingId(store.id);
     setStatusMsg(null);
     try {
-      await eliminarTienda(store.id);
+      const { mensaje } = await eliminarTienda(store.id);
       if (uploadStore?.id === store.id) setUploadStore(null);
       await loadStores();
       setFilters({ ...filters, tiendas: filters.tiendas.filter((t) => t !== store.id) });
       setStatusOk(true);
-      setStatusMsg(`Tienda ${store.id} eliminada.`);
+      setStatusMsg(mensaje);
+      onDatosActualizados?.();
     } catch (err) {
       setStatusOk(false);
       setStatusMsg(err instanceof Error ? err.message : "Error al eliminar");

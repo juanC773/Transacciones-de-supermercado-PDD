@@ -137,7 +137,7 @@ def build_dashboard_payload(
         heat_corr = {"labels": [], "matrix": []}
     else:
         sub = feat[cols]
-        # Con poca data o columnas constantes (p. ej. solo tienda 111) corr() da NaN.
+        # Con pocas filas o columnas constantes, corr() puede devolver NaN.
         if sub.std(numeric_only=True).min(skipna=True) == 0:
             heat_corr = {"labels": [], "matrix": []}
         else:

@@ -6,6 +6,7 @@ import pandas as pd
 from src.etl.dashboard_data import ensure_aggregates, invalidate_aggregates_cache
 from src.ml.pipeline import ml_ready, train_ml_models
 from src.ml.recommender import (
+    invalidate_recommender_cache,
     load_recommender_meta,
     recommend_for_category,
     recommend_for_client,
@@ -25,6 +26,7 @@ def invalidate_ml_cache() -> None:
     global _seg_payload_cache, _seg_payload_mtime
     _seg_payload_cache = None
     _seg_payload_mtime = 0.0
+    invalidate_recommender_cache()
 
 
 def build_segmentation_payload(
@@ -79,8 +81,13 @@ def build_recommendations_cliente(
     if not ml_ready():
         train_ml_models(ensure_aggregates())
     agg = ensure_aggregates()
-    canastas = _filter_canastas(agg.get("canastas", pd.DataFrame()), tiendas, fecha_min, fecha_max)
-    recs = recommend_for_client(id_cliente, canastas)
+    canastas = agg.get("canastas", pd.DataFrame())
+    if canastas.empty:
+        cli = canastas
+    else:
+        cli = canastas.loc[canastas["id_cliente"] == id_cliente]
+        cli = _filter_canastas(cli, tiendas, fecha_min, fecha_max)
+    recs = recommend_for_client(id_cliente, cli)
     return {
         "id_cliente": id_cliente,
         "recomendaciones": recs,

@@ -44,13 +44,15 @@ export async function crearTienda(idTienda: number, nombre: string): Promise<Sto
   return data.tienda;
 }
 
-export async function eliminarTienda(idTienda: number): Promise<void> {
-  const res = await fetch(`${API_URL}/api/tiendas/${idTienda}`, { method: "DELETE" });
+export async function eliminarTienda(idTienda: number): Promise<{ mensaje: string }> {
+  const res = await fetchLong(`${API_URL}/api/tiendas/${idTienda}`, { method: "DELETE" });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     const detail = (err as { detail?: string }).detail;
     throw new Error(typeof detail === "string" ? detail : "No se pudo eliminar la tienda");
   }
+  const data = (await res.json()) as { mensaje?: string };
+  return { mensaje: data.mensaje ?? "Tienda eliminada." };
 }
 
 export async function fetchMeta(): Promise<Meta> {
@@ -114,5 +116,9 @@ export async function agregarDatosTienda(
 
 export async function procesarNuevosDatos(): Promise<void> {
   const res = await fetchLong(`${API_URL}/api/ingest/procesar`, { method: "POST" });
-  if (!res.ok) throw new Error("Error al procesar nuevos datos");
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const detail = (err as { detail?: string }).detail;
+    throw new Error(typeof detail === "string" ? detail : "Error al procesar nuevos datos");
+  }
 }

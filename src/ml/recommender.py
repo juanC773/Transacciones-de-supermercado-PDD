@@ -23,6 +23,10 @@ MAX_BASKETS_TRAIN = 80_000
 MIN_CONFIDENCE = 0.08
 RULES_PER_ANTECEDENT = 25
 
+_rules_cache_mtime: float = 0.0
+_rules_cache: tuple[list[dict], dict[str, list]] = ([], {})
+_cat_names_cache: dict[int, str] | None = None
+
 
 def _basket_categories(row: pd.Series, prod_map: dict[int, list[int]]) -> list[int]:
     raw = [int(c) for c in str(row["categorias"]).split() if c.strip().isdigit()]
@@ -119,15 +123,54 @@ def train_recommender(canastas: pd.DataFrame) -> dict:
 
 
 def _load_rules() -> tuple[list[dict], dict[str, list]]:
+    global _rules_cache_mtime, _rules_cache
     path = ML_DIR / "reglas_asociacion.json"
     if not path.exists():
         return [], {}
+    mtime = path.stat().st_mtime
+    if mtime == _rules_cache_mtime:
+        return _rules_cache
     data = json.loads(path.read_text(encoding="utf-8"))
-    return data.get("rules", []), data.get("by_antecedent", {})
+    _rules_cache = (data.get("rules", []), data.get("by_antecedent", {}))
+    _rules_cache_mtime = mtime
+    return _rules_cache
 
 
-def _cat_name(cat_id: int) -> str:
-    return _load_categories().get(cat_id, f"Categoría {cat_id}")
+def invalidate_recommender_cache() -> None:
+    """Invalida caché de reglas tras reprocesar el ETL."""
+    global _rules_cache_mtime, _rules_cache, _cat_names_cache
+    _rules_cache_mtime = 0.0
+    _rules_cache = ([], {})
+    _cat_names_cache = None
+
+
+def _category_names() -> dict[int, str]:
+    """Nombres 1-50 desde meta del recomendador (sin releer GCS en cada consulta)."""
+    global _cat_names_cache
+    if _cat_names_cache is not None:
+        return _cat_names_cache
+    meta = load_recommender_meta()
+    if meta and meta.get("categorias"):
+        _cat_names_cache = {int(k): v for k, v in meta["categorias"].items()}
+        return _cat_names_cache
+    _cat_names_cache = _load_categories()
+    return _cat_names_cache
+
+
+def _cat_name(cat_id: int, names: dict[int, str] | None = None) -> str:
+    names = names or _category_names()
+    return names.get(cat_id, f"Categoría {cat_id}")
+
+
+def _categories_from_canastas_column(categorias: str) -> set[int]:
+    """El ETL ya guarda ids de categoría (1-50) en la columna categorias."""
+    out: set[int] = set()
+    for part in str(categorias).split():
+        if part.isdigit():
+            c = int(part)
+            if 1 <= c <= VALID_CATEGORY_MAX:
+                out.add(c)
+    return out
 
 
 def recommend_for_client(
@@ -139,14 +182,16 @@ def recommend_for_client(
     if not by_cat:
         return []
 
-    cli = canastas[canastas["id_cliente"] == id_cliente]
+    if "id_cliente" in canastas.columns:
+        cli = canastas.loc[canastas["id_cliente"] == id_cliente]
+    else:
+        cli = canastas
     if cli.empty:
         return []
 
-    prod_map = _load_product_to_categories()
     bought: set[int] = set()
-    for _, row in cli.iterrows():
-        bought.update(_basket_categories(row, prod_map))
+    for cats_str in cli["categorias"].astype(str):
+        bought.update(_categories_from_canastas_column(cats_str))
 
     scores: dict[int, float] = defaultdict(float)
     for cat in bought:
@@ -155,11 +200,12 @@ def recommend_for_client(
                 if cons not in bought and 1 <= cons <= VALID_CATEGORY_MAX:
                     scores[cons] += rule["lift"] * rule["confidence"]
 
+    names = _category_names()
     ranked = sorted(scores.items(), key=lambda x: -x[1])[:top_n]
     return [
         {
             "id_categoria": cid,
-            "nombre_categoria": _cat_name(cid),
+            "nombre_categoria": _cat_name(cid, names),
             "score": round(sc, 3),
             "motivo": "Suele comprarse junto a categorías de tu historial",
         }
@@ -179,6 +225,8 @@ def recommend_for_category(id_categoria: int, top_n: int = 8) -> list[dict]:
             if cons != id_categoria and 1 <= cons <= VALID_CATEGORY_MAX:
                 scores[cons] += rule["lift"]
 
+    names = _category_names()
+    cat_label = _cat_name(id_categoria, names)
     ranked = sorted(scores.items(), key=lambda x: -x[1])[:top_n]
     out = []
     for cid, sc in ranked:
@@ -186,10 +234,10 @@ def recommend_for_category(id_categoria: int, top_n: int = 8) -> list[dict]:
         out.append(
             {
                 "id_categoria": cid,
-                "nombre_categoria": _cat_name(cid),
+                "nombre_categoria": _cat_name(cid, names),
                 "score": round(sc, 3),
                 "confidence": round(max(confs), 3) if confs else 0,
-                "motivo": f"Comprada frecuentemente junto a {_cat_name(id_categoria)}",
+                "motivo": f"Comprada frecuentemente junto a {cat_label}",
             }
         )
     return out

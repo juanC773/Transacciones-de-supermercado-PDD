@@ -1,0 +1,16 @@
+{
+  "total_unidades": 8794798,
+  "total_transacciones": 1062820,
+  "total_clientes": 154057,
+  "fecha_min": "2013-01-01 00:00:00",
+  "fecha_max": "2013-06-30 00:00:00",
+  "tiendas": [
+    102,
+    103,
+    107,
+    110,
+    111
+  ],
+  "generado": "2026-06-07T17:01:43.672970",
+  "etl_engine": "python-streaming-gcs"
+}

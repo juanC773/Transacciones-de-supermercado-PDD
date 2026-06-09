@@ -1,12 +1,16 @@
 """Carga y filtrado de agregados Parquet para la API."""
 from __future__ import annotations
+import time
 from typing import Any
 import pandas as pd
 from src.etl.load_transactions import AGG_DIR, build_aggregates, load_aggregates
 
-# Caché global: evita releer disco en cada clic del usuario en el dashboard
+# Caché en memoria de agregados Parquet (compartida entre peticiones del dashboard).
 _agg_cache: dict[str, pd.DataFrame] | None = None
 _agg_cache_mtime: float = 0.0
+_gcs_mtime_cache: float = 0.0
+_gcs_mtime_checked_at: float = 0.0
+_GCS_MTIME_TTL_SEC = 45.0
 
 
 def _local_mtime() -> float:
@@ -16,19 +20,36 @@ def _local_mtime() -> float:
 
 def aggregates_mtime() -> float:
     """Hora de modificación de .done; si cambia, hay que recargar caché."""
-    from src.storage.gcs import aggregates_gcs_mtime, gcs_enabled
+    from src.storage.gcs import gcs_enabled
 
     local = _local_mtime()
     if gcs_enabled():
-        return max(local, aggregates_gcs_mtime())
+        return max(local, _gcs_agg_mtime_cached())
     return local
 
 
 def invalidate_aggregates_cache() -> None:
-    """Llamar después de POST /api/etl/regenerar para forzar nueva lectura."""
-    global _agg_cache, _agg_cache_mtime
+    """Invalida la caché tras regenerar el ETL o sincronizar desde GCS."""
+    global _agg_cache, _agg_cache_mtime, _gcs_mtime_cache, _gcs_mtime_checked_at
     _agg_cache = None
     _agg_cache_mtime = 0.0
+    _gcs_mtime_cache = 0.0
+    _gcs_mtime_checked_at = 0.0
+
+
+def _gcs_agg_mtime_cached() -> float:
+    """Devuelve el timestamp remoto en GCS con TTL para reducir llamadas al bucket."""
+    global _gcs_mtime_cache, _gcs_mtime_checked_at
+    from src.storage.gcs import aggregates_gcs_mtime, gcs_enabled
+
+    if not gcs_enabled():
+        return 0.0
+    now = time.time()
+    if now - _gcs_mtime_checked_at < _GCS_MTIME_TTL_SEC:
+        return _gcs_mtime_cache
+    _gcs_mtime_cache = aggregates_gcs_mtime()
+    _gcs_mtime_checked_at = now
+    return _gcs_mtime_cache
 
 
 def ensure_aggregates() -> dict[str, pd.DataFrame]:
@@ -38,22 +59,22 @@ def ensure_aggregates() -> dict[str, pd.DataFrame]:
     """
     global _agg_cache, _agg_cache_mtime
     from src.ml.pipeline import ML_DIR
-    from src.storage.gcs import aggregates_gcs_mtime, gcs_enabled, sync_aggregates_from_gcs
+    from src.storage.gcs import gcs_enabled, sync_aggregates_from_gcs
 
-    if gcs_enabled() and aggregates_gcs_mtime() > _local_mtime():
+    if gcs_enabled() and _gcs_agg_mtime_cached() > _local_mtime():
         sync_aggregates_from_gcs(AGG_DIR, ML_DIR)
         invalidate_aggregates_cache()
 
-    # Si nunca corrió el ETL, lo ejecuta ahora
     if not (AGG_DIR / ".done").exists():
         invalidate_aggregates_cache()
-        _agg_cache = build_aggregates(force=True)
+        build_aggregates(force=True)
+        _agg_cache = load_aggregates()
         _agg_cache_mtime = aggregates_mtime()
         return _agg_cache
 
     mtime = aggregates_mtime()
     if _agg_cache is not None and mtime == _agg_cache_mtime:
-        return _agg_cache  # hit de caché
+        return _agg_cache
 
     _agg_cache = load_aggregates()
     _agg_cache_mtime = mtime

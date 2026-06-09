@@ -75,7 +75,7 @@ def ensure_store_csv_local(store_id: int) -> bool:
 
 
 def _prune_custom_registry() -> dict[str, dict[str, str]]:
-    """Quita del registro tiendas custom sin CSV (p. ej. borrado manual del archivo)."""
+    """Elimina del registro las tiendas custom cuyo CSV ya no existe."""
     custom = _load_custom()
     stale = [sid for sid in custom if not store_csv_exists(int(sid))]
     if not stale:

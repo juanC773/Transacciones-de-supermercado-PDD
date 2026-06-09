@@ -1,4 +1,4 @@
-"""Lectura/escritura en GCS con caché local bajo /app."""
+"""Sincronización y persistencia de datos en Google Cloud Storage."""
 from __future__ import annotations
 
 import os
@@ -152,9 +152,16 @@ def sync_products_from_gcs(raw_prod: Path) -> None:
     if not gcs_enabled():
         return
     raw_prod.mkdir(parents=True, exist_ok=True)
+    missing: list[str] = []
     for fname in ("Categories.csv", "ProductCategory.csv"):
         key = f"{GCS_DATA_PREFIX}/Products/{fname}"
-        download_blob(key, raw_prod / fname)
+        local = raw_prod / fname
+        if not download_blob(key, local):
+            missing.append(f"gs://{_bucket_name()}/{key}")
+    if missing:
+        raise FileNotFoundError(
+            "No se pudieron descargar archivos de productos desde GCS: " + ", ".join(missing)
+        )
 
 
 def _gcs_agg_prefix() -> str:
@@ -177,21 +184,28 @@ def _ml_prefixes() -> list[str]:
     return [base] if base == legacy else [base, legacy]
 
 
+def _sync_prefix_newest(prefixes: list[str], dest: Path) -> None:
+    """Descarga cada objeto eligiendo la copia más reciente entre prefijos de salida."""
+    dest.mkdir(parents=True, exist_ok=True)
+    newest: dict[str, tuple[float, str]] = {}
+    for prefix in prefixes:
+        for name in list_blobs(prefix):
+            if name.endswith("/"):
+                continue
+            fname = Path(name).name
+            ts = mtime(name)
+            prev = newest.get(fname)
+            if prev is None or ts > prev[0]:
+                newest[fname] = (ts, name)
+    for fname, (_, key) in newest.items():
+        download_blob(key, dest / fname)
+
+
 def sync_aggregates_from_gcs(agg_dir: Path, ml_dir: Path) -> None:
     if not gcs_enabled():
         return
-    agg_dir.mkdir(parents=True, exist_ok=True)
-    ml_dir.mkdir(parents=True, exist_ok=True)
-    for prefix in _agg_prefixes():
-        for name in list_blobs(prefix):
-            if name.endswith("/"):
-                continue
-            download_blob(name, agg_dir / Path(name).name)
-    for prefix in _ml_prefixes():
-        for name in list_blobs(prefix):
-            if name.endswith("/"):
-                continue
-            download_blob(name, ml_dir / Path(name).name)
+    _sync_prefix_newest(_agg_prefixes(), agg_dir)
+    _sync_prefix_newest(_ml_prefixes(), ml_dir)
 
 
 def sync_aggregates_to_gcs(agg_dir: Path, ml_dir: Path) -> None:
@@ -208,6 +222,9 @@ def sync_aggregates_to_gcs(agg_dir: Path, ml_dir: Path) -> None:
 
 
 def aggregates_gcs_mtime() -> float:
-    stamps = [mtime(f"{p}/.done") for p in _agg_prefixes()]
-    stamps += [mtime(f"{p}/meta.json") for p in _agg_prefixes()]
+    """Timestamp máximo de meta.json y .done en los prefijos de agregados."""
+    stamps: list[float] = []
+    for prefix in _agg_prefixes():
+        stamps.append(mtime(f"{prefix}/.done"))
+        stamps.append(mtime(f"{prefix}/meta.json"))
     return max(stamps) if stamps else 0.0

@@ -6,9 +6,9 @@ RUN pip install --no-cache-dir -r requirements-prod.txt
 
 COPY backend ./backend
 COPY src ./src
-# Snapshot inicial (GCS es la fuente de verdad si GCS_BUCKET está definido):
+# Agregados embebidos en la imagen; en producción GCS tiene prioridad.
 COPY data/processed ./data/processed
-# Categories.csv para recomendador (cloudbuild lo descarga de GCS antes del build):
+# Catálogo de productos (también se obtiene de GCS en el build de Cloud Build).
 RUN mkdir -p DataSet/DataSet/Products
 COPY DataSet/DataSet/Products ./DataSet/DataSet/Products
 

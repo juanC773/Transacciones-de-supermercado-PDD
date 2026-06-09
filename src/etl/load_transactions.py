@@ -37,6 +37,10 @@ def _load_categories() -> dict[int, str]:
     """Mapa id_categoria -> nombre desde Categories.csv."""
     _sync_inputs_from_gcs()
     cat_path = RAW_PROD / "Categories.csv"
+    if not cat_path.exists():
+        raise FileNotFoundError(
+            f"Falta {cat_path}. Verifica gs://.../DataSet/DataSet/Products/Categories.csv en GCS."
+        )
     cats = pd.read_csv(
         cat_path, sep="|", header=None, names=["id_categoria", "nombre_categoria"]
     )
@@ -296,11 +300,6 @@ def build_aggregates(force: bool = False) -> dict[str, pd.DataFrame]:
     state = _AggState()
     for f in tran_files:
         _process_file(f, cats, state, prod_map)
-    frames = _state_to_frames(state, cats)
-    # Persistencia: un .parquet por tabla agregada + meta.json + marcador .done
-    for name, df in frames.items():
-        if not df.empty:
-            df.to_parquet(AGG_DIR / f"{name}.parquet", index=False)
     meta = {
         "total_unidades": state.total_unidades,
         "total_transacciones": state.total_tx,
@@ -311,11 +310,22 @@ def build_aggregates(force: bool = False) -> dict[str, pd.DataFrame]:
         "generado": datetime.now().isoformat(),
         "etl_engine": "python-streaming-gcs" if gcs_enabled() else "python-streaming",
     }
+    frames = _state_to_frames(state, cats)
+    del state
+    import gc
+
+    gc.collect()
+    # Persistencia: un .parquet por tabla agregada + meta.json + marcador .done
+    for name, df in frames.items():
+        if not df.empty:
+            df.to_parquet(AGG_DIR / f"{name}.parquet", index=False)
     META_FILE.write_text(json.dumps(meta, indent=2), encoding="utf-8")
     marker.touch()
-    _train_ml_safe(frames)
+    del frames
+    gc.collect()
+    _train_ml_safe(None)
     _sync_outputs_to_gcs()
-    return frames
+    return {}
 
 
 def _train_ml_safe(frames: dict[str, pd.DataFrame]) -> None:
@@ -346,12 +356,12 @@ def load_meta() -> dict:
 
 def build_hechos(force: bool = False) -> pd.DataFrame:
     raise MemoryError(
-        "hechos.parquet completo no se carga en el dashboard. "
-        "Use build_aggregates() o el botón Regenerar datos."
+        "La tabla de hechos completa no se expone en el dashboard; "
+        "se utilizan agregados vía build_aggregates()."
     )
 
 def load_hechos() -> pd.DataFrame:
-    raise MemoryError("Use load_aggregates() en lugar de load_hechos().")
+    raise MemoryError("Cargar agregados con load_aggregates(), no hechos completos.")
 if __name__ == "__main__":
     data = build_aggregates(force=True)
     meta = load_meta()

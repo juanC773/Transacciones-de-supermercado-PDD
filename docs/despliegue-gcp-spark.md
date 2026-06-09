@@ -154,7 +154,7 @@ gcloud run deploy transpdd-api `
   --image gcr.io/transpdd-tu-iniciales/transpdd-api `
   --region us-central1 `
   --allow-unauthenticated `
-  --memory 2Gi --cpu 2 --timeout 300 `
+  --memory 4Gi --cpu 2 --timeout 300 `
   --set-env-vars "ETL_ENGINE=python,GCS_BUCKET=transpdd-pdd-datos,GCS_DATA_PREFIX=DataSet/DataSet,GCS_OUTPUT_PREFIX=salida/processed"
 ```
 
@@ -172,7 +172,7 @@ Probar: `/api/health` → `aggregates_ready: true`, `gcs_enabled: true`.
 2. Variable `NEXT_PUBLIC_API_URL` = URL de Cloud Run.
 3. Deploy.
 
-CORS: el código ya permite `https://*.vercel.app`. Opcional: `CORS_ORIGINS=https://tu-app.vercel.app` en Cloud Run.
+CORS: el código permite `https://*.vercel.app` y dominios de producción configurados en `CORS_ORIGINS` (ej. `https://pj-supermercados.lat`).
 
 ---
 
